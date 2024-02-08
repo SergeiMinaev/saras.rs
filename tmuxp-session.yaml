@@ -1,0 +1,22 @@
+# Если вы не используете Tmuxp, игнорируйте этот файл.
+#
+# Конфиг для запуска проекта через сессию Tmuxp ( https://github.com/tmux-python/tmuxp ).
+# Для загрузки сессии VIM, должен быть установлен плагин https://github.com/mhinz/vim-startify ,
+# а сессия должна быть сохранена с названием saras.
+# Путь до каталога проекта должен быть записан в $SARAS_HOME.
+# Проект запускается этой командой:
+# tmuxp load /work/saras/tmuxp-session.yaml
+
+
+session_name: saras
+start_directory: $SARAS_HOME
+windows:
+
+- window_name: manage
+
+- window_name: code
+  focus: true
+  panes:
+    - shell_command:
+      - vim
+      - :SLoad saras
