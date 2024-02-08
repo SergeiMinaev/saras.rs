@@ -1,0 +1,95 @@
+use std::path::{Path, PathBuf};
+use log::debug;
+use crate::errors::Error;
+use crate::storage::storage::Storage;
+use crate::storage::util::open_local_file;
+use crate::conf::CONF;
+use crate::util::{ slugify, norm_path };
+
+pub struct ImageStorage {
+	storage: Storage,
+}
+
+impl ImageStorage {
+	pub fn new() -> Self {
+		let storage = Storage::new();
+		Self { storage }
+	}
+	pub async fn delete(&self, rel_path: &PathBuf) -> Result<(), Error> {
+		let conf = CONF.read().await;
+		for format in &conf.image_formats {
+			for size in &conf.image_sizes {
+				let path = format!("{}/{}.{format}", size.size, rel_path.display());
+				self.storage.delete(&path).await?;
+			}
+		}
+		let main_format = &conf.main_image_format;
+		let mut main_path = PathBuf::from(format!("orig/{}.{main_format}", rel_path.display()));
+		self.storage.delete(&main_path).await?;
+		Ok(())
+	}
+	pub async fn delete_dir(&self, rel_path: &PathBuf) -> Result<(), Error> {
+		let conf = CONF.read().await;
+		for size in &conf.image_sizes {
+			let path = format!("{}/{}", size.size, rel_path.display());
+			self.storage.delete(&path).await?;
+		}
+		let main_path = PathBuf::from(format!("orig/{}", rel_path.display()));
+		self.storage.delete(&main_path).await?;
+		Ok(())
+	}
+	pub async fn save(&self, data: Vec<u8>, path: &PathBuf) -> Result<PathBuf, Error> {
+		let format: &str = path.extension().unwrap().to_str().unwrap();
+		let png_path = img_shrink::make_png(&data, format);
+
+		let conf = CONF.read().await;
+		let main_format = &conf.main_image_format;
+
+		let mut path = PathBuf::from(format!("orig/{}", path.display()));
+		path.set_extension(main_format);
+		let mut path = self.storage.get_unique_path(&path).await?;
+
+		let crop = false;
+		let main_img_path: PathBuf = img_shrink::make_version(
+			&png_path, main_format, &conf.main_image_size, crop
+		);
+		let main_img_data = open_local_file(&main_img_path).await;
+		let mut result_path = self.storage.save(main_img_data, &path).await?;
+		result_path.set_extension("");
+		let mut result_path = result_path.strip_prefix("orig").unwrap().to_path_buf();
+		debug!("result path: {}", result_path.display());
+
+		let mut path = path.strip_prefix("orig").unwrap();
+		for format in &conf.image_formats {
+			for size in &conf.image_sizes {
+				let mut path = PathBuf::from(size.size.clone()).join(path.clone());
+				path.set_extension(format);
+				let variant_path_tmp: PathBuf = img_shrink::make_version(
+					&png_path, format, &size.size, size.crop
+				);
+				let variant_data = open_local_file(&variant_path_tmp).await;
+				let variant_path = self.storage.save(variant_data, &path).await?;
+				debug!("variant: {}", variant_path.display());
+			}
+		}
+		Ok(result_path)
+	}
+	pub async fn  ls_imgs(&self, path: &PathBuf) -> Vec<String> {
+		let path = norm_path(format!("orig/{}", path.display()));
+		let path = PathBuf::from(path.strip_prefix("/").unwrap_or(&path));
+		let mut list: Vec<String> = self.storage.ls(&path).await;
+		list.into_iter()
+			.filter_map(|s| {
+				if s.ends_with('/') {
+					Some(s)
+				} else if s.ends_with(".jxl") {
+					let mut s = s.clone();
+					s.truncate(s.len() - ".jxl".len());
+					Some(s)
+				} else {
+					None
+				}
+			})
+			.collect()
+	}
+}

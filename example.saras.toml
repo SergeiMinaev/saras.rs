@@ -1,0 +1,30 @@
+socket_path = "/work/saras/saras.sock"
+is_dev = true
+
+main_image_size = "1900x1900"
+main_image_format = "jxl"
+image_formats = ["jxl", "webp"]
+
+[[image_sizes]]
+	size = "250x250"
+	crop = false
+[[image_sizes]]
+	size = "500x500"
+	crop = true
+[[image_sizes]]
+	size = "1000x1000"
+	crop = false
+[[image_sizes]]
+	size = "1600x1600"
+	crop = false
+
+[selectel]
+account_id = "12345"
+proj_id = "123abc"
+proj_name = "myproj"
+container_name = "mycontainer"
+container_hostname = "https://12345-12345-12345.selstorage.ru"
+svc_user_name = "myusername"
+svc_user_pwd = "12345"
+token_lifetime_sec = 43200
+api_base_url = "https://swift.ru-1.storage.selcloud.ru/v1"
