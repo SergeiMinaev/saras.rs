@@ -59,7 +59,7 @@ pub fn textfield_schema(gen: &mut schemars::gen::SchemaGenerator) -> Schema {
 	/// Add "description: "textfield" to the schema.
 	/// Usage:
 	/// #[derive(Serialize, Deserialize, Debug, schemars::JsonSchema)]
-	/// pub struct Article {
+	/// pub struct Post {
 	/// 	pub id: u32,
 	/// 	pub title: String,
 	/// 	#[schemars(schema_with = "textfield_schema")]
