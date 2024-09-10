@@ -8,6 +8,25 @@ use crate::storage::img_storage::forms::ImgStorageUploadForm;
 use crate::validation::parse_deser_error;
 use crate::storage::img_storage::service;
 use crate::storage::storage::Storage;
+use lpsql::QueryParam as qp;
+use crate::lpsql::Lpsql;
+use crate::users::users::models::User;
+use crate::users::users::forms::UserForm;
+use argon2::{
+	password_hash::{
+		rand_core::OsRng,
+		PasswordHash, PasswordHasher, PasswordVerifier, SaltString
+	},
+	Argon2
+};
+use once_cell::sync::Lazy;
+use std::sync::RwLock;
+use serde::Deserialize;
+
+
+pub static lpsql: Lazy<Lpsql> = Lazy::new(|| {
+    Lpsql::new(None)
+});
 
 
 pub async fn img_storage(req: Request) -> Resp {

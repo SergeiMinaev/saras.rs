@@ -1,4 +1,5 @@
 use lpsql::QueryParam as qp;
+use crate::lpsql::Lpsql;
 use crate::users::users::models::User;
 use crate::users::users::forms::UserForm;
 use argon2::{
@@ -8,6 +9,14 @@ use argon2::{
 	},
 	Argon2
 };
+use once_cell::sync::Lazy;
+use std::sync::RwLock;
+use serde::Deserialize;
+
+
+pub static lpsql: Lazy<Lpsql> = Lazy::new(|| {
+    Lpsql::new(None)
+});
 
 
 pub struct UserDb {}
@@ -25,7 +34,7 @@ impl UserDb {
 			else null end as avatar
 			from users_users as users where id = $1::INT
 		) data";
-		match lpsql::get_one(query, prms) {
+		match lpsql.get_one(query, prms) {
 			None => None::<User>,
 			Some(v) => {
 				serde_json::from_str(&v).unwrap()
@@ -35,7 +44,7 @@ impl UserDb {
 	pub fn total_count() -> i32 {
 	  let q = "select count(*) from users_users";
 	  let p: Vec<qp> = vec![];
-	  lpsql::get_one(q, p).unwrap().parse().unwrap()
+	  lpsql.get_one(q, p).unwrap().parse().unwrap()
 	}
 	pub fn page(offset: i32, size: i32) -> Vec<User> {
 		let mut r: Vec<User> = vec![];
@@ -51,7 +60,7 @@ impl UserDb {
 			from users_users as users
 			order by id offset $1::INT limit $2::INT
 		) data";
-		match lpsql::_exec(query, prms) {
+		match lpsql._exec(query, prms) {
 			Err(e) => println!("SQL err: {e}"),
 			Ok(resp) => {
 				for u in resp {
@@ -71,7 +80,7 @@ impl UserDb {
 			qp::String(hash.to_string()),
 		];
 		let query = "insert into users_users (email, hash) values ($1::TEXT, $2::TEXT) returning id";
-		match lpsql::get_one(query, prms) {
+		match lpsql.get_one(query, prms) {
 			None => return None::<i32>,
 			Some(id) => {
 				return Some(id.parse().unwrap())
@@ -97,7 +106,7 @@ impl UserDb {
 		let q = "update users_users set email = $2::TEXT, is_superuser = $3::BOOL 
 			where id = $1::INT
 			returning id";
-		match lpsql::get_one(q, prms) {
+		match lpsql.get_one(q, prms) {
 			None => None::<i32>,
 			Some(id) => Some(id.parse().unwrap())
 		}

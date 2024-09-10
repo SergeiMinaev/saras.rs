@@ -1,4 +1,5 @@
 use lpsql::QueryParam as qp;
+use crate::lpsql::Lpsql;
 use crate::users::avatars::models::Avatar;
 use crate::users::users::forms::UserForm;
 use crate::errors::Error;
@@ -9,6 +10,14 @@ use argon2::{
 	},
 	Argon2
 };
+use once_cell::sync::Lazy;
+use std::sync::RwLock;
+use serde::Deserialize;
+
+
+pub static lpsql: Lazy<Lpsql> = Lazy::new(|| {
+    Lpsql::new(None)
+});
 
 pub struct AvatarDb {}
 
@@ -18,7 +27,7 @@ impl AvatarDb {
 			qp::Number(user_id)
 		];
 		let query = "select avatar from users_users where id = $1::INT";
-		match lpsql::get_one(query, prms) {
+		match lpsql.get_one(query, prms) {
 			None => Err(()),
 			Some(path) => {
 				return Ok(Avatar { path: path })
@@ -31,7 +40,7 @@ impl AvatarDb {
 			qp::String(rel_path.to_string()),
 		];
 		let query = "update users_users set avatar = $2::TEXT where id = $1::INT";
-		lpsql::_exec(query, prms).map_err(|_| Error::Database)?;
+		lpsql._exec(query, prms).map_err(|_| Error::Database)?;
 		Ok(())
 	}
 	pub fn delete(user_id: i32) -> bool {
@@ -39,7 +48,7 @@ impl AvatarDb {
 			qp::Number(user_id)
 		];
 		let query = "update users_users set avatar = null where id = $1::INT";
-		lpsql::_exec(query, prms).unwrap();
+		lpsql._exec(query, prms).unwrap();
 		true
 	}
 }

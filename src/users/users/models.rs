@@ -8,12 +8,20 @@ use argon2::{
 use std::path::PathBuf;
 use serde::{Serialize,Deserialize};
 use lpsql::QueryParam as qp;
+use crate::lpsql::Lpsql;
 use crate::auth::sessions::Session;
 //use crate::users::users::input::UserInput;
 use crate::users::users::db::UserDb;
 use crate::models::base_model::BaseModel;
 use crate::models::base::{ ImageStorage };
 use crate::models::image_field::{ ImageField };
+use once_cell::sync::Lazy;
+use std::sync::RwLock;
+
+
+pub static lpsql: Lazy<Lpsql> = Lazy::new(|| {
+    Lpsql::new(None)
+});
 
 
 
@@ -56,7 +64,7 @@ impl User {
 				// Empty string means deletion.
 				let prms: Vec<qp> = vec![qp::Number(id)];
 				let q = "select avatar from users_users where id = $1::INT";
-				let existing_path: String = lpsql::get_one(q, prms).unwrap();
+				let existing_path: String = lpsql.get_one(q, prms).unwrap();
 				println!("existing path? {existing_path}");
 				if existing_path != "" {
 					ImageStorage::delete(&existing_path).await;
@@ -65,7 +73,7 @@ impl User {
 					if existing_path != "" {
 						let prms: Vec<qp> = vec![qp::Number(id)];
 						let q = "update users_users set avatar = null where id = $1::INT";
-						return lpsql::exec(q, prms)
+						return lpsql.exec(q, prms)
 					} else {
 						return true
 					}
@@ -79,7 +87,7 @@ impl User {
 						qp::String(path.to_string_lossy().to_string())
 					];
 					let q = "update users_users set avatar = $2::TEXT where id = $1::INT";
-					return lpsql::exec(q, prms)
+					return lpsql.exec(q, prms)
 				}
 			}
 		}
@@ -87,7 +95,7 @@ impl User {
 	pub fn delete(id: i32) -> bool {
 	   let prms: Vec<qp> = vec![qp::Number(id)];
 	   let q = "delete from users_users where id = $1::INT";
-	   lpsql::exec(q, prms)
+	   lpsql.exec(q, prms)
 	}
 	pub fn by_email(email: String) -> Option<User> {
 		let prms: Vec<qp> = vec![
@@ -96,7 +104,7 @@ impl User {
 		let query = "select row_to_json(data) from (\
 			select id, email, hash, is_superuser from users_users where email = $1::TEXT \
 		) data";
-		match lpsql::get_one(query, prms) {
+		match lpsql.get_one(query, prms) {
 			None => None::<User>,
 			Some(v) => {
 				return serde_json::from_str(&v).unwrap();
@@ -114,7 +122,7 @@ impl User {
 			on usr.id = session.user_id where session.id = $1::BYTEA \
 			and session.expires > now()
 		) data";
-		match lpsql::get_one(query, prms) {
+		match lpsql.get_one(query, prms) {
 			None => None::<User>,
 			Some(v) => {
 				return serde_json::from_str(&v).unwrap();
@@ -141,7 +149,7 @@ impl User {
 			qp::String(self.id.to_string())
 		];
 		let query = "insert into auth_sessions (user_id) values ($1::INT) returning id";
-		match lpsql::get_one(query, prms) {
+		match lpsql.get_one(query, prms) {
 			None => None::<Session>,
 			Some(id) => {
 				return Session::by_id(id)
@@ -154,7 +162,7 @@ impl User {
 		let query = "select row_to_json(data) from (\
 			select id, email, hash, is_superuser from users\
 		) data";
-		match lpsql::_exec(query, prms) {
+		match lpsql._exec(query, prms) {
 			Err(e) => println!("ERR: {e}"),
 			Ok(resp) => {
 				for u in resp {

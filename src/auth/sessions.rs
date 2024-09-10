@@ -1,5 +1,13 @@
 use serde::{ Serialize,Deserialize };
 use lpsql::QueryParam as qp;
+use crate::lpsql::Lpsql;
+use once_cell::sync::Lazy;
+use std::sync::RwLock;
+
+
+pub static lpsql: Lazy<Lpsql> = Lazy::new(|| {
+    Lpsql::new(None)
+});
 
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -17,7 +25,7 @@ impl Session {
         let query = "select row_to_json(data) from (\
             select id, expires, user_id from auth_sessions where id = $1::BYTEA \
         ) data";
-        match lpsql::get_one(query, prms) {
+        match lpsql.get_one(query, prms) {
             None => None::<Session>,
             Some(v) => {
                 return serde_json::from_str(&v).unwrap();
