@@ -1,54 +1,76 @@
 use lpsql::QueryParam as qp;
-use crate::lpsql::Lpsql;
 use crate::users::avatars::models::Avatar;
-use crate::users::users::forms::UserForm;
 use crate::errors::Error;
-use argon2::{
-	password_hash::{
-		rand_core::OsRng,
-		PasswordHash, PasswordHasher, PasswordVerifier, SaltString
-	},
-	Argon2
-};
-use once_cell::sync::Lazy;
-use std::sync::RwLock;
-use serde::Deserialize;
+use lpsql::pool::ConnectionPool;
+use std::sync::Arc;
 
 
-pub static lpsql: Lazy<Lpsql> = Lazy::new(|| {
-    Lpsql::new(None)
-});
 
-pub struct AvatarDb {}
+pub struct AvatarDb {
+	pool: Arc<ConnectionPool>,
+}
 
 impl AvatarDb {
-	pub fn by_user_id(user_id: i32) -> Result<Avatar, ()> {
+	pub fn new(pool: Arc<ConnectionPool>) -> Self {
+		AvatarDb { pool }
+	}
+	pub async fn by_user_id(&self, user_id: i32) -> Result<Avatar, ()> {
 		let prms: Vec<qp> = vec![
 			qp::Number(user_id)
 		];
 		let query = "select avatar from users_users where id = $1::INT";
-		match lpsql.get_one(query, prms) {
+		//let conn = {
+		//	let mut pool_lock = self.pool.lock().await;
+		//	pool_lock.get_conn().await
+		//};
+		let conn = self.pool.get_conn().await;
+		let result = match conn.get_one(query, prms).await {
 			None => Err(()),
 			Some(path) => {
-				return Ok(Avatar { path: path })
+				Ok(Avatar { path: path })
 			}
-		}
+		};
+		//{
+		//	let mut pool_lock = self.pool.lock().await;
+		//	pool_lock.release_conn(conn).await;
+		//}
+		self.pool.release_conn(conn).await;
+		result
 	}
-	pub fn save(user_id: i32, rel_path: &str) -> Result<(), Error> {
+	pub async fn save(&self, user_id: i32, rel_path: &str) -> Result<(), Error> {
 		let prms: Vec<qp> = vec![
 			qp::Number(user_id),
 			qp::String(rel_path.to_string()),
 		];
 		let query = "update users_users set avatar = $2::TEXT where id = $1::INT";
-		lpsql._exec(query, prms).map_err(|_| Error::Database)?;
+		//let conn = {
+		//	let mut pool_lock = self.pool.lock().await;
+		//	pool_lock.get_conn().await
+		//};
+		let conn = self.pool.get_conn().await;
+		let _result = conn.exec(query, prms).await.map_err(|_| Error::Database)?;
+		//{
+		//	let mut pool_lock = self.pool.lock().await;
+		//	pool_lock.release_conn(conn).await;
+		//}
+		self.pool.release_conn(conn).await;
 		Ok(())
 	}
-	pub fn delete(user_id: i32) -> bool {
+	pub async fn delete(&self, user_id: i32) -> bool {
 		let prms: Vec<qp> = vec![
 			qp::Number(user_id)
 		];
-		let query = "update users_users set avatar = null where id = $1::INT";
-		lpsql._exec(query, prms).unwrap();
+		let query = "update users_users set avatar = null where id = $1::INT"; //let conn = {
+		//	let mut pool_lock = self.pool.lock().await;
+		//	pool_lock.get_conn().await
+		//};
+		let conn = self.pool.get_conn().await;
+		conn.exec(query, prms).await.unwrap();
+		//{
+		//	let mut pool_lock = self.pool.lock().await;
+		//	pool_lock.release_conn(conn).await;
+		//}
+		self.pool.release_conn(conn).await;
 		true
 	}
 }

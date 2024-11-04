@@ -3,18 +3,18 @@ use crate::users::users;
 
 
 pub trait RequestTools {
-    fn get_user(&self) -> Option<users::models::User>;
-    fn is_su(&self) -> bool;
+    fn get_user(&self) -> impl std::future::Future<Output = Option<users::models::User>> + Send;
+    fn is_su(&self) -> impl std::future::Future<Output = bool> + Send;
 }
 
 impl RequestTools for Request {
-    fn get_user(&self) -> Option<users::models::User> {
+    async fn get_user(&self) -> Option<users::models::User> {
         if self.session_id != "".to_string() {
-            return users::models::User::by_session_id(&self.session_id);
+            return users::models::User::by_session_id(&self.session_id).await;
         } else { return None }
     }
-    fn is_su(&self) -> bool {
-        match self.get_user() {
+    async fn is_su(&self) -> bool {
+        match self.get_user().await {
             None => return false,
             Some(u) => return u.is_superuser,
         }

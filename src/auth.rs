@@ -14,6 +14,6 @@ where
     F: Fn(Request) -> Fut,
     Fut: Future<Output = Resp>
 {
-    if !req.is_su() { return forbidden() }
+    if !req.is_su().await { return forbidden() }
     f(req).await
 }

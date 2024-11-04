@@ -1,5 +1,4 @@
 use once_cell::sync::Lazy;
-use async_lock::RwLock;
 use sl10n::define_l10n;
 
 

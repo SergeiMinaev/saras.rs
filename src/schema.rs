@@ -3,10 +3,11 @@ use serde::Serialize;
 use serde_json::{ json, Value };
 pub use schemars;
 use schemars::schema::RootSchema;
-use schemars::schema::{Schema, SchemaObject, Metadata};
 use crate::schema::schemars::{ JsonSchema };
 use crate::models::base_model::BaseModel;
 use std::any::type_name;
+use schemars::schema::Metadata;
+use schemars::schema::Schema;
 
 
 
@@ -55,16 +56,16 @@ pub fn to_json<T: JsonSchema + BaseModel  + serde::Serialize>(m: T) -> Value {
 }
 
 
+/// Add "description: "textfield" to the schema.
+/// Usage:
+/// #[derive(Serialize, Deserialize, Debug, schemars::JsonSchema)]
+/// pub struct Post {
+/// 	pub id: u32,
+/// 	pub title: String,
+/// 	#[schemars(schema_with = "textfield_schema")]
+/// 	pub text: String,
+/// }
 pub fn textfield_schema(gen: &mut schemars::gen::SchemaGenerator) -> Schema {
-	/// Add "description: "textfield" to the schema.
-	/// Usage:
-	/// #[derive(Serialize, Deserialize, Debug, schemars::JsonSchema)]
-	/// pub struct Post {
-	/// 	pub id: u32,
-	/// 	pub title: String,
-	/// 	#[schemars(schema_with = "textfield_schema")]
-	/// 	pub text: String,
-	/// }
     let mut schema = String::json_schema(gen);
     if let Schema::Object(ref mut obj) = schema {
         obj.metadata = Some(Box::new(Metadata {

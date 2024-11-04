@@ -1,29 +1,46 @@
 use lpsql::QueryParam as qp;
-use crate::lpsql::Lpsql;
 use crate::users::users::models::User;
 use crate::users::users::forms::UserForm;
 use argon2::{
 	password_hash::{
 		rand_core::OsRng,
-		PasswordHash, PasswordHasher, PasswordVerifier, SaltString
+		PasswordHasher, SaltString
 	},
 	Argon2
 };
-use once_cell::sync::Lazy;
-use std::sync::RwLock;
-use serde::Deserialize;
+use lpsql::pool::ConnectionPool;
+use std::sync::Arc;
+//use smol::Timer;
+//use std::time::Duration;
 
 
-pub static lpsql: Lazy<Lpsql> = Lazy::new(|| {
-    Lpsql::new(None)
-});
-
-
-pub struct UserDb {}
-
+pub struct UserDb {
+	pool: Arc<ConnectionPool>,
+}
+//async fn async_sleep() {
+//	Timer::after(Duration::from_secs(3)).await;
+//}
 
 impl UserDb {
-	pub fn by_id(id: i32) -> Option<User> {
+	pub fn new(pool: Arc<ConnectionPool>) -> Self {
+		UserDb { pool }
+	}
+	pub async fn sleep(&self) {
+		let q = "select pg_sleep(3)";
+		let p: Vec<qp> = vec![];
+		let conn = self.pool.get_conn().await;
+		let _ = conn.exec(q, p).await;
+		self.pool.release_conn(conn).await;
+	}
+	pub async fn total_count(&self) -> i32 {
+		let q = "select count(*) from users_users";
+		let p: Vec<qp> = vec![];
+		let conn = self.pool.get_conn().await;
+		let result = conn.get_one(q, p).await.unwrap().parse().unwrap();
+		self.pool.release_conn(conn).await;
+		result
+	}
+	pub async fn by_id(&self, id: i32) -> Option<User> {
 		let prms: Vec<qp> = vec![
 			qp::Number(id)
 		];
@@ -34,19 +51,17 @@ impl UserDb {
 			else null end as avatar
 			from users_users as users where id = $1::INT
 		) data";
-		match lpsql.get_one(query, prms) {
+		let conn = self.pool.get_conn().await;
+		let result = match conn.get_one(query, prms).await {
 			None => None::<User>,
 			Some(v) => {
 				serde_json::from_str(&v).unwrap()
 			}
-		}
+		};
+		self.pool.release_conn(conn).await;
+		result
 	}
-	pub fn total_count() -> i32 {
-	  let q = "select count(*) from users_users";
-	  let p: Vec<qp> = vec![];
-	  lpsql.get_one(q, p).unwrap().parse().unwrap()
-	}
-	pub fn page(offset: i32, size: i32) -> Vec<User> {
+	pub async fn page(&self, offset: i32, size: i32) -> Vec<User> {
 		let mut r: Vec<User> = vec![];
 		let prms: Vec<qp> = vec![
 		  qp::Number(offset),
@@ -60,7 +75,8 @@ impl UserDb {
 			from users_users as users
 			order by id offset $1::INT limit $2::INT
 		) data";
-		match lpsql._exec(query, prms) {
+		let conn = self.pool.get_conn().await;
+		match conn.exec(query, prms).await {
 			Err(e) => println!("SQL err: {e}"),
 			Ok(resp) => {
 				for u in resp {
@@ -68,9 +84,10 @@ impl UserDb {
 				}
 			}
 		}
+		self.pool.release_conn(conn).await;
 		return r
 	}
-	pub fn create(data: UserForm) -> Option<i32> {
+	pub async fn create(&self, data: UserForm) -> Option<i32> {
 		if validator::validate_email(&data.email) == false { return None::<i32> }
 		let argon2 = Argon2::default();
 		let salt = SaltString::generate(&mut OsRng);
@@ -80,24 +97,29 @@ impl UserDb {
 			qp::String(hash.to_string()),
 		];
 		let query = "insert into users_users (email, hash) values ($1::TEXT, $2::TEXT) returning id";
-		match lpsql.get_one(query, prms) {
-			None => return None::<i32>,
+		let conn = self.pool.get_conn().await;
+		let _result = match conn.get_one(query, prms).await {
+			None => {
+				self.pool.release_conn(conn).await;
+				return None::<i32>
+			},
 			Some(id) => {
+				self.pool.release_conn(conn).await;
 				return Some(id.parse().unwrap())
 			}
 		};
 
 	}
-	pub fn create_and_get(form: UserForm) -> Option<User> {
-	  match UserDb::create(form) {
+	pub async fn create_and_get(&self, form: UserForm) -> Option<User> {
+	  match self.create(form).await {
 		None => return None,
 		Some(id) => {
-		  return UserDb::by_id(id);
+		  return self.by_id(id).await;
 		}
 	  }
 	}
 
-	pub async fn update(id: i32, data: UserForm) -> Option<i32> {
+	pub async fn update(&self, id: i32, data: UserForm) -> Option<i32> {
 		let prms: Vec<qp> = vec![
 			qp::Number(id),
 			qp::String(data.email),
@@ -106,17 +128,19 @@ impl UserDb {
 		let q = "update users_users set email = $2::TEXT, is_superuser = $3::BOOL 
 			where id = $1::INT
 			returning id";
-		match lpsql.get_one(q, prms) {
+		let conn = self.pool.get_conn().await;
+		let result = match conn.get_one(q, prms).await {
 			None => None::<i32>,
 			Some(id) => Some(id.parse().unwrap())
-		}
-		//User::update_avatar(id, data.avatar).await
+		};
+		self.pool.release_conn(conn).await;
+		result
 	}
 
-	pub async fn update_and_get(id: i32, data: UserForm) -> Option<User> {
-	  match UserDb::update(id, data).await {
+	pub async fn update_and_get(&self, id: i32, data: UserForm) -> Option<User> {
+	  match self.update(id, data).await {
 		None => return None,
-		Some(id) => return UserDb::by_id(id),
+		Some(id) => return self.by_id(id).await,
 	  }
 	}
 }

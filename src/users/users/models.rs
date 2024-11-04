@@ -1,27 +1,24 @@
 use argon2::{
 	password_hash::{
-		rand_core::OsRng,
-		PasswordHash, PasswordHasher, PasswordVerifier, SaltString
+		PasswordHash, PasswordVerifier
 	},
 	Argon2
 };
 use std::path::PathBuf;
 use serde::{Serialize,Deserialize};
 use lpsql::QueryParam as qp;
-use crate::lpsql::Lpsql;
 use crate::auth::sessions::Session;
-//use crate::users::users::input::UserInput;
-use crate::users::users::db::UserDb;
 use crate::models::base_model::BaseModel;
 use crate::models::base::{ ImageStorage };
 use crate::models::image_field::{ ImageField };
-use once_cell::sync::Lazy;
-use std::sync::RwLock;
+use crate::db::get_pool;
+use lpsql::pool::ConnectionPool;
+use std::sync::Arc;
 
 
-pub static lpsql: Lazy<Lpsql> = Lazy::new(|| {
-    Lpsql::new(None)
-});
+//pub static lpsql: Lazy<Lpsql> = Lazy::new(|| {
+//    Lpsql::new(None)
+//});
 
 
 
@@ -64,7 +61,14 @@ impl User {
 				// Empty string means deletion.
 				let prms: Vec<qp> = vec![qp::Number(id)];
 				let q = "select avatar from users_users where id = $1::INT";
-				let existing_path: String = lpsql.get_one(q, prms).unwrap();
+				let pool: Arc<ConnectionPool> = get_pool();
+				let pool = pool.clone();
+				let conn = pool.get_conn().await;
+				//let conn = {
+				//	let mut pool_lock = pool.lock().await;
+				//	pool_lock.get_conn().await
+				//};
+				let existing_path: String = conn.get_one(q, prms).await.unwrap();
 				println!("existing path? {existing_path}");
 				if existing_path != "" {
 					ImageStorage::delete(&existing_path).await;
@@ -73,8 +77,19 @@ impl User {
 					if existing_path != "" {
 						let prms: Vec<qp> = vec![qp::Number(id)];
 						let q = "update users_users set avatar = null where id = $1::INT";
-						return lpsql.exec(q, prms)
+						let _result = conn.exec(q, prms).await;
+						//{
+						//	let mut pool_lock = pool.lock().await;
+						//	pool_lock.release_conn(conn).await;
+						//}
+		pool.release_conn(conn).await;
+						return true
 					} else {
+						//{
+						//	let mut pool_lock = pool.lock().await;
+						//	pool_lock.release_conn(conn).await;
+						//}
+		pool.release_conn(conn).await;
 						return true
 					}
 				} else {
@@ -87,32 +102,65 @@ impl User {
 						qp::String(path.to_string_lossy().to_string())
 					];
 					let q = "update users_users set avatar = $2::TEXT where id = $1::INT";
-					return lpsql.exec(q, prms)
+					let _result = conn.exec(q, prms).await;
+					//{
+					//	let mut pool_lock = pool.lock().await;
+					//	pool_lock.release_conn(conn).await;
+					//}
+		pool.release_conn(conn).await;
+					return true
 				}
 			}
 		}
 	}
-	pub fn delete(id: i32) -> bool {
+	pub async fn delete(id: i32) -> bool {
 	   let prms: Vec<qp> = vec![qp::Number(id)];
 	   let q = "delete from users_users where id = $1::INT";
-	   lpsql.exec(q, prms)
+				let pool = get_pool();
+				let pool = pool.clone();
+				//let conn = {
+				//	let mut pool_lock = pool.lock().await;
+				//	pool_lock.get_conn().await
+				//};
+				let conn = pool.get_conn().await;
+	   let _result = conn.exec(q, prms).await;
+					//{
+					//	let mut pool_lock = pool.lock().await;
+					//	pool_lock.release_conn(conn).await;
+					//}
+		pool.release_conn(conn).await;
+	   return true
 	}
-	pub fn by_email(email: String) -> Option<User> {
+	pub async fn by_email(email: String) -> Option<User> {
+		println!("by_email {email}");
 		let prms: Vec<qp> = vec![
 			qp::String(email)
 		];
 		let query = "select row_to_json(data) from (\
 			select id, email, hash, is_superuser from users_users where email = $1::TEXT \
 		) data";
-		match lpsql.get_one(query, prms) {
+				let pool = get_pool();
+				//let pool = pool.clone();
+				//let conn = {
+				//	let mut pool_lock = pool.lock().await;
+				//	pool_lock.get_conn().await
+				//};
+				let conn = pool.get_conn().await;
+		let result = match conn.get_one(query, prms).await {
 			None => None::<User>,
 			Some(v) => {
-				return serde_json::from_str(&v).unwrap();
+				serde_json::from_str(&v).unwrap()
 			}
 		};
-		None
+		println!("got result: {result:?}");
+					//{
+					//	let mut pool_lock = pool.lock().await;
+					//	pool_lock.release_conn(conn).await;
+					//}
+		pool.release_conn(conn).await;
+		result
 	}
-	pub fn by_session_id(sess_id: &String) -> Option<User> {
+	pub async fn by_session_id(sess_id: &String) -> Option<User> {
 		let prms: Vec<qp> = vec![
 			qp::String(sess_id.to_string())
 		];
@@ -122,13 +170,24 @@ impl User {
 			on usr.id = session.user_id where session.id = $1::BYTEA \
 			and session.expires > now()
 		) data";
-		match lpsql.get_one(query, prms) {
+		let pool = get_pool();
+		let conn = pool.get_conn().await;
+		//let conn = {
+		//	let mut pool_lock = pool.lock().await;
+		//	pool_lock.get_conn().await
+		//};
+		let result = match conn.get_one(query, prms).await {
 			None => None::<User>,
 			Some(v) => {
-				return serde_json::from_str(&v).unwrap();
+				serde_json::from_str(&v).unwrap()
 			}
 		};
-		None
+		//{
+		//	let mut pool_lock = pool.lock().await;
+		//	pool_lock.release_conn(conn).await;
+		//}
+		pool.release_conn(conn).await;
+		result
 	}
 	pub fn check_password(&self, pwd: String) -> bool {
 		match PasswordHash::new(&self.hash) {
@@ -144,25 +203,43 @@ impl User {
 			},
 		}
 	}
-	pub fn add_session(&self) -> Option<Session> {
+	pub async fn add_session(&self) -> Option<Session> {
 		let prms: Vec<qp> = vec![
 			qp::String(self.id.to_string())
 		];
 		let query = "insert into auth_sessions (user_id) values ($1::INT) returning id";
-		match lpsql.get_one(query, prms) {
+				let pool = get_pool();
+				//let conn = {
+				//	let mut pool_lock = pool.lock().await;
+				//	pool_lock.get_conn().await
+				//};
+				let conn = pool.get_conn().await;
+		let result = match conn.get_one(query, prms).await {
 			None => None::<Session>,
 			Some(id) => {
-				return Session::by_id(id)
+				Session::by_id(id).await
 			}
-		}
+		};
+					//{
+					//	let mut pool_lock = pool.lock().await;
+					//	pool_lock.release_conn(conn).await;
+					//}
+					pool.release_conn(conn).await;
+		result
 	}
-	pub fn all() -> Vec<User> {
+	pub async fn all() -> Vec<User> {
 		let mut r: Vec<User> = vec![];
 		let prms: Vec<qp> = vec![];
 		let query = "select row_to_json(data) from (\
 			select id, email, hash, is_superuser from users\
 		) data";
-		match lpsql._exec(query, prms) {
+				let pool = get_pool();
+				//let conn = {
+				//	let mut pool_lock = pool.lock().await;
+				//	pool_lock.get_conn().await
+				//};
+				let conn = pool.get_conn().await;
+		match conn.exec(query, prms).await {
 			Err(e) => println!("ERR: {e}"),
 			Ok(resp) => {
 				for u in resp {
@@ -170,6 +247,11 @@ impl User {
 				}
 			}
 		}
+					//{
+					//	let mut pool_lock = pool.lock().await;
+					//	pool_lock.release_conn(conn).await;
+					//}
+					pool.release_conn(conn).await;
 		return r
 	}
 }

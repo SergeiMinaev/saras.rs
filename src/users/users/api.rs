@@ -3,28 +3,26 @@ use crate::http::{Request,Resp};
 use crate::http;
 use crate::http::JsonResp;
 use crate::errors::Error;
-use crate::users::users::models;
 use crate::users::users::db::UserDb;
 use crate::users::users::service;
 use crate::users::users::forms::{ CreateUserForm, UpdateUserForm };
-use crate::users::users::forms::UserForm;
-use once_cell::sync::Lazy;
-use async_lock::RwLock;
-use sl10n::define_l10n;
+//use sl10n::define_l10n;
+use crate::db::get_pool;
+//use crate::storage::msgs::Msgs;
 
 
-define_l10n! {
-    hello => {
-		en: "Hello, {name}!",
-		ru: "Привет, {name}!"
-	},
-}
+//define_l10n! {
+//    hello => {
+//		en: "Hello, {name}!",
+//		ru: "Привет, {name}!"
+//	},
+//}
 
-pub static MSGS: Lazy<Msgs> = Lazy::new(|| Msgs::new());
+//pub static MSGS: Lazy<Msgs> = Lazy::new(|| Msgs::new());
 
-pub fn t(key: Msg) -> String {
-	MSGS.msg(key, "ru")
-}
+//pub fn t(key: Msg) -> String {
+//	MSGS.msg(key, "ru")
+//}
 
 
 pub async fn users(req: Request) -> Resp {
@@ -45,7 +43,9 @@ pub async fn users(req: Request) -> Resp {
 
 pub async fn get_user(req: Request) -> Resp {
     let id: i32 = req.route.get("id").unwrap().parse().unwrap();
-    match UserDb::by_id(id) {
+	let pool = get_pool();
+	let userdb = UserDb::new(pool.clone());
+    match userdb.by_id(id).await {
 		Some(user) => {
 			let r = json!(user);
 			return JsonResp::ok("").content(&r).to_http()
@@ -55,9 +55,10 @@ pub async fn get_user(req: Request) -> Resp {
 }
 
 pub async fn get_users(_req: Request) -> Resp {
-    UserDb::total_count();
-    let r = UserDb::page(0,20);
-    return JsonResp::ok("").content(&r).to_http()
+	let pool = get_pool();
+	let userdb = UserDb::new(pool.clone());
+	userdb.sleep().await;
+	http::not_found()
 }
 
 pub async fn create_user(req: Request) -> Resp {
@@ -65,7 +66,7 @@ pub async fn create_user(req: Request) -> Resp {
         Err(e) => JsonResp::err("Не удалось создать пользователя.", &Error::Validation)
 			.content(&e).to_http(),
         Ok(user_form) => {
-			match service::create_user(user_form) {
+			match service::create_user(user_form).await {
 				Err(e) => JsonResp::err("Не удалось создать пользователя.", &Error::Common)
 					.content(&e).to_http(),
 				Ok(user) => JsonResp::ok("Пользователь сохранён.").content(&user).to_http()
@@ -76,7 +77,7 @@ pub async fn create_user(req: Request) -> Resp {
 
 pub async fn update_user(req: Request) -> Resp {
 	match UpdateUserForm::validate(&req) {
-        Err(e) => JsonResp::err("Не удалось изменить пользователя.", &Error::Validation).to_http(),
+        Err(_e) => JsonResp::err("Не удалось изменить пользователя.", &Error::Validation).to_http(),
         Ok(user_form) => {
 			let id: i32 = req.route.get("id").unwrap().parse().unwrap();
 			match service::update_user(id, user_form).await {
@@ -88,10 +89,11 @@ pub async fn update_user(req: Request) -> Resp {
 }
 
 pub async fn delete_user(req: Request) -> Resp {
-    let id: i32 = req.route.get("id").unwrap().parse().unwrap();
-    match models::User::delete(id) {
-        false => JsonResp::err("Не удалось удалить пользователя.", &Error::Common).to_http(),
-        true => JsonResp::ok("Пользователь удалён.").to_http(),
-    }
+    let _id: i32 = req.route.get("id").unwrap().parse().unwrap();
+    //match models::User::delete(id) {
+    //    false => JsonResp::err("Не удалось удалить пользователя.", &Error::Common).to_http(),
+    //    true => JsonResp::ok("Пользователь удалён.").to_http(),
+    //}
+    JsonResp::err("Не удалось удалить пользователя.", &Error::Common).to_http()
 }
 

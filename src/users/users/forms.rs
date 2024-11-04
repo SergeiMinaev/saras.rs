@@ -1,10 +1,8 @@
 use serde::Deserialize;
 use serde_json;
 use validator::{ Validate, ValidationError };
-use crate::users::users::models::User;
 use crate::http::{ Request };
 use crate::validation::{ ValidationErrors, parse_deser_error, make_validation_error };
-use crate::models::image_field::ImageField;
 use crate::forms::image_field_form::ImageFieldForm;
 
 
@@ -31,9 +29,9 @@ impl Default for UserForm {
 	}
 }
 
-fn get_false() -> Option<bool> { Some(false) }
+//fn get_false() -> Option<bool> { Some(false) }
 
-fn validate_email(email: &str) ->  Result<(), ValidationError> {
+fn validate_email(_email: &str) ->  Result<(), ValidationError> {
 	//Err(ValidationError::new("terrible email"))
 	Ok(())
 }

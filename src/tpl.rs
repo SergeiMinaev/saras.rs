@@ -1,7 +1,5 @@
-use std::fs;
 use std::path::{Path, PathBuf};
 use regex::Regex;
-use async_fs::File;
 use futures_lite::{AsyncReadExt, StreamExt};
 use once_cell::sync::Lazy;
 use async_lock::RwLock;
@@ -32,7 +30,8 @@ pub async fn get_index_html(index_path: &str, tpl_dirs: Vec<&str>) -> String {
 }
 
 async fn inc_tpls(index_path: &str, tpl_dirs: Vec<&str>) -> String {
-	let mut index_html = async_fs::read_to_string(index_path).await.unwrap();
+	let index_html = async_fs::read_to_string(index_path).await
+		.expect(&format!("Unable to open {index_path}"));
 	let mut tpls_html = String::new();
 	for path in tpl_dirs {
 		let dir_entries = async_fs::read_dir(path).await.unwrap()
@@ -41,11 +40,11 @@ async fn inc_tpls(index_path: &str, tpl_dirs: Vec<&str>) -> String {
 					|f| if f.ends_with("/index.html") == false
 					&& f.ends_with(".html") { Some(d) } else { None }
 				));
-		let mut dir_entries = dir_entries.collect::<Vec<_>>().await;
+		let dir_entries = dir_entries.collect::<Vec<_>>().await;
 		for entry in dir_entries {
 			let path = entry.path();
 			if path.is_file() {
-				let mut tpl_html = async_fs::read_to_string(path).await.unwrap();
+				let tpl_html = async_fs::read_to_string(path).await.unwrap();
 				tpls_html.push_str(&tpl_html);
 			}
 		}
@@ -118,8 +117,8 @@ async fn calc_hash(path: PathBuf) -> String {
 	}
 	let mut file = async_fs::File::open(path).await.unwrap();
 	let mut hasher = Sha256::new();
-	let BUF_SIZE = 1024*32;
-	let mut buffer = vec![0u8; BUF_SIZE];
+	let buf_size = 1024*32;
+	let mut buffer = vec![0u8; buf_size];
 	loop {
 		let n = file.read(&mut buffer).await.unwrap();
 		if n == 0 { break; }

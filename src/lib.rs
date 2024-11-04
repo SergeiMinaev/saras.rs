@@ -19,6 +19,7 @@ pub mod validation;
 pub mod errors;
 pub mod forms;
 pub mod images;
+pub mod db;
 
 pub use lpsql;
 pub use schemars;

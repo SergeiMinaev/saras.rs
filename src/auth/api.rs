@@ -27,7 +27,7 @@ pub async fn login(req: Request) -> Resp {
             if u_.is_valid() == false {
                 return json_resp(401, r#"{"err": "bad_login_input"}"#.to_string())
             }
-            match models::User::by_email(u_.email) {
+            match models::User::by_email(u_.email).await {
                 None => {
                     return json_resp(401, r#"{"err": "user_not_found"}"#.to_string())
                 },
@@ -36,7 +36,7 @@ pub async fn login(req: Request) -> Resp {
                         return json_resp(
                             401, r#"{"err": "bad_pwd"}"#.to_string())
                     } else {
-                        if let Some(sess) = u.add_session() {
+                        if let Some(sess) = u.add_session().await {
                             //return session_resp(200, Some(sess.id));
                             let r = json!(u);
                             return JsonResp::ok("").content(&r).session_id(sess.id).to_http()
@@ -52,7 +52,7 @@ pub async fn login(req: Request) -> Resp {
 }
 
 pub async fn get_user(req: Request) -> Resp {
-    match req.get_user() {
+    match req.get_user().await {
 		None => return JsonResp::err("unauthorized", &Error::Auth).code(401).to_http(),
         Some(user) => {
             let j = json!(&user);

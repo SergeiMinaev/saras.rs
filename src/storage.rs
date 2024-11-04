@@ -161,7 +161,7 @@ pub async fn ls_imgs(path: &String) -> Vec<String> {
 	let url = base_url.as_str();
 	let mut resp = isahc::Request::builder()
 		.method("GET")
-		.uri(url.clone())
+		.uri(url)
 		.header("X-Auth-Token", token.clone())
 		.body(())
 		.unwrap()

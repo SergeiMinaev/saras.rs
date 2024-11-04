@@ -1,32 +1,10 @@
 use std::path::PathBuf;
-use serde_json::json;
 use log::debug;
 use crate::http::{ Request, Resp, JsonResp, not_found };
 use crate::errors::Error;
 use crate::images::image_storage::ImageStorage;
 use crate::storage::img_storage::forms::ImgStorageUploadForm;
-use crate::validation::parse_deser_error;
 use crate::storage::img_storage::service;
-use crate::storage::storage::Storage;
-use lpsql::QueryParam as qp;
-use crate::lpsql::Lpsql;
-use crate::users::users::models::User;
-use crate::users::users::forms::UserForm;
-use argon2::{
-	password_hash::{
-		rand_core::OsRng,
-		PasswordHash, PasswordHasher, PasswordVerifier, SaltString
-	},
-	Argon2
-};
-use once_cell::sync::Lazy;
-use std::sync::RwLock;
-use serde::Deserialize;
-
-
-pub static lpsql: Lazy<Lpsql> = Lazy::new(|| {
-    Lpsql::new(None)
-});
 
 
 pub async fn img_storage(req: Request) -> Resp {
@@ -69,9 +47,9 @@ pub async fn delete(req: Request) -> Resp {
 	debug!("delete: {:?}", req);
 	let img_storage = ImageStorage::new();
 	if path.ends_with("/") {
-		img_storage.delete_dir(&PathBuf::from(path)).await;
+		let _ = img_storage.delete_dir(&PathBuf::from(path)).await;
 	} else {
-		img_storage.delete(&PathBuf::from(path)).await;
+		let _ = img_storage.delete(&PathBuf::from(path)).await;
 	}
 	JsonResp::ok("Файл удалён.").to_http()
 }

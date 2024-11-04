@@ -4,11 +4,10 @@ use crate::http;
 use crate::http::JsonResp;
 use crate::errors::Error;
 use crate::request::RequestTools;
-use crate::posts::posts::models;
 use crate::posts::posts::db::PostDb;
 use crate::posts::posts::service;
 use crate::posts::posts::forms::{ CreatePostForm, UpdatePostForm  };
-use crate::posts::posts::forms::PostForm;
+use crate::db::get_pool;
 
 
 pub async fn posts(req: Request) -> Resp {
@@ -21,7 +20,7 @@ pub async fn posts(req: Request) -> Resp {
 			}
 	    },
 	    "post" | "put" | "delete" => {
-			if req.is_su() {
+			if req.is_su().await {
 				match req.method.as_str() {
 					"post" => return create_post(req).await,
 					"put" => return update_post(req).await,
@@ -39,7 +38,9 @@ pub async fn posts(req: Request) -> Resp {
 
 pub async fn get_post(req: Request) -> Resp {
 	let id: i32 = req.route.get("id").unwrap().parse().unwrap();
-	match PostDb::by_id(id) {
+	let pool = get_pool();
+	let postdb = PostDb::new(pool.clone());
+	match postdb.by_id(id).await {
 		Some(post) => {
 			let r = json!(post);
 			return JsonResp::ok("").content(&r).to_http()
@@ -50,8 +51,10 @@ pub async fn get_post(req: Request) -> Resp {
 
 
 pub async fn get_posts(_req: Request) -> Resp {
-	PostDb::total_count();
-	let r = PostDb::page(0,20);
+	let pool = get_pool();
+	let postdb = PostDb::new(pool.clone());
+	postdb.total_count().await;
+	let r = postdb.page(0,20).await;
 	return JsonResp::ok("").content(&r).to_http()
 }
 
@@ -62,7 +65,7 @@ pub async fn create_post(req: Request) -> Resp {
 		Err(e) => JsonResp::err("Не удалось создать статью.", &Error::Validation)
 			.content(&e).to_http(),
 		Ok(post_form) => {
-			match service::create_post(post_form) {
+			match service::create_post(post_form).await {
 				Err(e) => JsonResp::err("Не удалось создать статью.", &Error::Common)
 					.content(&e).to_http(),
 				Ok(post) => JsonResp::ok("Статья сохранена.").content(&post).to_http()
@@ -74,7 +77,7 @@ pub async fn create_post(req: Request) -> Resp {
 
 pub async fn update_post(req: Request) -> Resp {
 	match UpdatePostForm::validate(&req) {
-        Err(e) => JsonResp::err("Не удалось изменить пользователя.", &Error::Validation).to_http(),
+        Err(_) => JsonResp::err("Не удалось изменить пользователя.", &Error::Validation).to_http(),
         Ok(post_form) => {
 			let id: i32 = req.route.get("id").unwrap().parse().unwrap();
 			match service::update_post(id, post_form).await {
@@ -88,7 +91,7 @@ pub async fn update_post(req: Request) -> Resp {
 
 pub async fn delete_post(req: Request) -> Resp {
 	let id: i32 = req.route.get("id").unwrap().parse().unwrap();
-	match service::delete_post(id) {
+	match service::delete_post(id).await {
 		false => JsonResp::err("Не удалось удалить пользователя.", &Error::Common).to_http(),
 		true => JsonResp::ok("Пользователь удалён.").to_http(),
 	}

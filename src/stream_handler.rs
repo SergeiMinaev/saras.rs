@@ -17,7 +17,7 @@ impl StreamHandler {
 		Fut: Future<Output = Resp>,
 	{
 		let mut buf: Vec<u8> = vec![];
-		self.stream.read_to_end(&mut buf).await;
+		let _ = self.stream.read_to_end(&mut buf).await;
 		let req: Request = bincode::deserialize(&buf).unwrap();
 		let resp = (url_dispatcher)(req).await;
 		self.write_resp(&resp).await;

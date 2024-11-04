@@ -1,4 +1,3 @@
-use crate::validator::{ Validate, ValidationError };
 use crate::serde::Deserialize;
 use crate::serde_json;
 use crate::validation::{ ValidationErrors, parse_deser_error, make_validation_error };

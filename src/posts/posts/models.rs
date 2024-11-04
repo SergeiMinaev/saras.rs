@@ -1,8 +1,6 @@
 use serde::{Serialize,Deserialize};
 use crate::schemars;
 use crate::models::base_model::BaseModel;
-use schemars::schema::{Schema, SchemaObject, Metadata};
-use crate::schemars::JsonSchema;
 use crate::schema::textfield_schema;
 
 

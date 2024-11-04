@@ -3,17 +3,15 @@ use chrono::{Duration};
 use isahc::http::status::StatusCode;
 use isahc::prelude::*;
 use isahc::Body;
-use log::debug;
+//use log::debug;
 use serde_json::json;
 use rand::{thread_rng, Rng};
 use rand::distributions::Alphanumeric;
 use crate::errors::Error;
 use crate::conf::CONF;
 use crate::memstore::MEMSTORE;
-use crate::users::users;
-use crate::storage::msgs;
-use crate::util::{ slugify, norm_path };
-use url::Url;
+//use crate::storage::msgs;
+use crate::util::slugify;
 
 
 const TOKEN_KEY: &str = "storage_token";
@@ -77,6 +75,7 @@ impl Storage {
 			"{}?delimiter=/&prefix={}/",
 			get_base_url().await, path.display()
 		);
+		//debug!("url: {url}");
 		let mut resp = isahc::Request::builder()
 			.method("GET")
 			.uri(url.clone())
@@ -92,10 +91,10 @@ impl Storage {
 			.collect()
 	}
 	pub async fn delete<P: AsRef<Path>>(&self, path: P) -> Result<(), Error>{
-		debug!("Storage delete path {}", path.as_ref().display());
+		//debug!("Storage delete path {}", path.as_ref().display());
 		let token = self.get_token().await;
 		let url = get_api_url(&path).await;
-		debug!("Storage delete url {}", url);
+		//debug!("Storage delete url {}", url);
 		let resp = isahc::Request::builder()
 			.method("DELETE")
 			.uri(url)
@@ -104,32 +103,44 @@ impl Storage {
 			.unwrap()
 			.send().
 			map_err(|_| Error::Storage)?;
-		debug!("storage resp: {resp:?}");
-		debug!("storage status: {:?}", resp.status());
+		//debug!("storage resp: {resp:?}");
+		//debug!("storage status: {:?}", resp.status());
 		match resp.status() {
 			StatusCode::NO_CONTENT => return Ok(()),
 			_ => return Err(Error::Storage),
 		}
 	}
 	pub async fn save(&self, data: Vec<u8>, path: &PathBuf) -> Result<PathBuf, Error> {
-		self._save(data, path, false).await
+		let is_fixed_path = false;
+		let is_force_overwrite = false;
+		self._save(data, path, is_fixed_path, is_force_overwrite).await
 	}
 	pub async fn save_fixed(&self, data: Vec<u8>, path: &PathBuf) -> Result<(), Error> {
-		self._save(data, path, true).await.map(|_| ())
+		let is_fixed_path = true;
+		let is_force_overwrite = false;
+		self._save(data, path, is_fixed_path, is_force_overwrite).await.map(|_| ())
 	}
-	pub async fn _save(&self, data: Vec<u8>, path: &PathBuf, fixed_path: bool
-			) -> Result<PathBuf, Error> {
+	pub async fn save_force_overwrite(&self, data: Vec<u8>, path: &PathBuf) -> Result<(), Error> {
+		let is_fixed_path = true;
+		let is_force_overwrite = true;
+		self._save(data, path, is_fixed_path, is_force_overwrite).await.map(|_| ())
+	}
+	pub async fn _save(&self, data: Vec<u8>, path: &PathBuf,
+		fixed_path: bool, is_force_overwrite: bool
+	) -> Result<PathBuf, Error> {
 		let mut path = path.clone();
 		if fixed_path {
 			if self.exists(&path).await? {
-				return Err(Error::Common)
+				if !is_force_overwrite {
+					return Err(Error::Common)
+				}
 			}
 		} else {
 			path = self.get_unique_path(&path).await?;
 		}
 
 		let url = get_api_url(&path).await;
-		debug!("Storage save url{}", url);
+		//debug!("Storage save url{}", url);
 
 		let resp = isahc::Request::builder()
 			.method("PUT")
@@ -139,8 +150,8 @@ impl Storage {
 			.unwrap()
 			.send()
 			.unwrap();
-		//debug!("API resp: {resp:?}");
 		if resp.status() != StatusCode::CREATED {
+			//debug!("API resp: {resp:?}");
 			return Err(Error::Storage)
 		}
 		Ok(path)
