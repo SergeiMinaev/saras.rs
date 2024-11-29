@@ -32,8 +32,11 @@ pub async fn ls(req: Request) -> Resp {
 pub async fn upload(req: Request) -> Resp {
     let form: ImgStorageUploadForm = match serde_json::from_str(&req.body_string) {
         Ok(form) => form,
-        Err(_) => return JsonResp::err("Не удалось загрузить изображение.", &Error::Storage)
-			.to_http(),
+        Err(e) => {
+			debug!("upload(): {e}");
+			return JsonResp::err("Не удалось загрузить изображение.", &Error::Storage)
+			.to_http()
+		},
     };
     if let Err(e) = service::upload_img(form).await {
         debug!("upload(): {e}");

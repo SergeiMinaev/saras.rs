@@ -3,6 +3,7 @@ use crate::users::avatars::models::Avatar;
 use crate::errors::Error;
 use lpsql::pool::ConnectionPool;
 use std::sync::Arc;
+use log::debug;
 
 
 
@@ -19,10 +20,6 @@ impl AvatarDb {
 			qp::Number(user_id)
 		];
 		let query = "select avatar from users_users where id = $1::INT";
-		//let conn = {
-		//	let mut pool_lock = self.pool.lock().await;
-		//	pool_lock.get_conn().await
-		//};
 		let conn = self.pool.get_conn().await;
 		let result = match conn.get_one(query, prms).await {
 			None => Err(()),
@@ -30,10 +27,6 @@ impl AvatarDb {
 				Ok(Avatar { path: path })
 			}
 		};
-		//{
-		//	let mut pool_lock = self.pool.lock().await;
-		//	pool_lock.release_conn(conn).await;
-		//}
 		self.pool.release_conn(conn).await;
 		result
 	}
@@ -43,16 +36,11 @@ impl AvatarDb {
 			qp::String(rel_path.to_string()),
 		];
 		let query = "update users_users set avatar = $2::TEXT where id = $1::INT";
-		//let conn = {
-		//	let mut pool_lock = self.pool.lock().await;
-		//	pool_lock.get_conn().await
-		//};
 		let conn = self.pool.get_conn().await;
-		let _result = conn.exec(query, prms).await.map_err(|_| Error::Database)?;
-		//{
-		//	let mut pool_lock = self.pool.lock().await;
-		//	pool_lock.release_conn(conn).await;
-		//}
+		let _result = conn.exec(query, prms).await.map_err(|err| {
+			panic!("AvatarDB::save failed: {err}");
+			//Error::Database
+		});
 		self.pool.release_conn(conn).await;
 		Ok(())
 	}
@@ -61,15 +49,12 @@ impl AvatarDb {
 			qp::Number(user_id)
 		];
 		let query = "update users_users set avatar = null where id = $1::INT"; //let conn = {
-		//	let mut pool_lock = self.pool.lock().await;
-		//	pool_lock.get_conn().await
-		//};
 		let conn = self.pool.get_conn().await;
-		conn.exec(query, prms).await.unwrap();
-		//{
-		//	let mut pool_lock = self.pool.lock().await;
-		//	pool_lock.release_conn(conn).await;
-		//}
+		
+		conn.exec(query, prms).await.unwrap_or_else(|err| {
+			//debug!("AvatarDb::delete failed with query: {query}, prms: {:?}", prms);
+			panic!("AvatarDb::delete failed: {err:?}")
+		});
 		self.pool.release_conn(conn).await;
 		true
 	}

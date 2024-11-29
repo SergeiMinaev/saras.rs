@@ -8,17 +8,23 @@ use crate::errors::Error;
 use crate::db::get_pool;
 
 
-pub async fn create_user(user_form: UserForm) -> Result<User, ValidationErrors> {
+pub async fn create_user(user_form: UserForm) -> Result<User, Error> {
 	let pool = get_pool();
 	let userdb = UserDb::new(pool.clone());
-	Ok(userdb.create_and_get(user_form).await.unwrap())
+	let user = userdb.create_and_get(user_form.clone()).await.unwrap();
+	if let Some(ref avatar) = user_form.avatar {
+		if avatar.data_base64.is_some() {
+			update_avatar(user.id.try_into().unwrap(), &avatar).await?;
+		}
+	}
+	Ok(user)
 }
 
 
 pub async fn update_user(id: i32, user_form: UserForm) -> Result<User, Error> {
 	let pool = get_pool();
 	if let Some(ref avatar) = user_form.avatar {
-		if avatar.path.as_os_str().is_empty() {
+		if avatar.del.unwrap_or(false) {
 			let avatardb = AvatarDb::new(pool.clone());
 			let avatar = avatardb.by_user_id(id).await.unwrap();
 			if avatar.path == "" {
@@ -27,7 +33,7 @@ pub async fn update_user(id: i32, user_form: UserForm) -> Result<User, Error> {
 				println!("go delete ava");
 				delete_avatar(id).await?;
 			}
-		} else {
+		} else if avatar.data_base64.is_some() {
 			println!("go update ava");
 			update_avatar(id, &avatar).await?;
 		}
@@ -38,3 +44,8 @@ pub async fn update_user(id: i32, user_form: UserForm) -> Result<User, Error> {
 	Ok(userdb.update_and_get(id, user_form).await.unwrap())
 }
 
+pub async fn delete_user(id: i32) -> Result<(), Error> {
+	let pool = get_pool();
+	let userdb = UserDb::new(pool.clone());
+	userdb.delete(id).await
+}

@@ -19,7 +19,7 @@ pub async fn update_avatar(user_id: i32, form: &ImageFieldForm) -> Result<(), Er
 	println!("update_avatar {user_id}");
 	let _ = delete_avatar(user_id).await;
 	let img_storage = ImageStorage::new();
-	let bytes = decode_base64(&form.data_base64)?;
+	let bytes = decode_base64(&form.data_base64.clone().unwrap())?;
 	let path = PathBuf::from("users/avatars").join(form.path.clone());
 	debug!("ava form path: {}", &form.path.display());
 	let path = img_storage.save(bytes, &path).await?;

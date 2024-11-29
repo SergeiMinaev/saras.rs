@@ -8,8 +8,12 @@ use crate::validation::{ ValidationErrors, parse_deser_error };
 
 #[derive(Debug, Validate, Deserialize, Clone)]
 pub struct ImageFieldForm {
+	/// Относительный путь до файла
 	pub path: PathBuf,
-	pub data_base64: String,
+	/// Содержимое файла в base64
+	pub data_base64: Option<String>,
+	/// Если true, файл будет удалён.
+	pub del: Option<bool>,
 }
 
 impl ImageFieldForm {

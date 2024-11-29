@@ -77,12 +77,12 @@ pub async fn create_post(req: Request) -> Resp {
 
 pub async fn update_post(req: Request) -> Resp {
 	match UpdatePostForm::validate(&req) {
-        Err(_) => JsonResp::err("Не удалось изменить пользователя.", &Error::Validation).to_http(),
+        Err(_) => JsonResp::err("Не удалось изменить пост.", &Error::Validation).to_http(),
         Ok(post_form) => {
 			let id: i32 = req.route.get("id").unwrap().parse().unwrap();
 			match service::update_post(id, post_form).await {
-				Err(e) => JsonResp::err("Не удалось изменить пользователя", &e).to_http(),
-				Ok(post) => JsonResp::ok("Пользователь изменён.").content(&post).to_http()
+				Err(e) => JsonResp::err("Не удалось изменить пост.", &e).to_http(),
+				Ok(post) => JsonResp::ok("Пост изменён.").content(&post).to_http()
 			}
 		}
 	}
@@ -92,7 +92,7 @@ pub async fn update_post(req: Request) -> Resp {
 pub async fn delete_post(req: Request) -> Resp {
 	let id: i32 = req.route.get("id").unwrap().parse().unwrap();
 	match service::delete_post(id).await {
-		false => JsonResp::err("Не удалось удалить пользователя.", &Error::Common).to_http(),
-		true => JsonResp::ok("Пользователь удалён.").to_http(),
+		false => JsonResp::err("Не удалось удалить пост.", &Error::Common).to_http(),
+		true => JsonResp::ok("Пост удалён.").to_http(),
 	}
 }

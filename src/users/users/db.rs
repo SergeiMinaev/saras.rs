@@ -10,6 +10,7 @@ use argon2::{
 };
 use lpsql::pool::ConnectionPool;
 use std::sync::Arc;
+use crate::errors::Error;
 //use smol::Timer;
 //use std::time::Duration;
 
@@ -142,5 +143,18 @@ impl UserDb {
 		None => return None,
 		Some(id) => return self.by_id(id).await,
 	  }
+	}
+
+	pub async fn delete(&self, id: i32) -> Result<(), Error> {
+		let prms: Vec<qp> = vec![qp::Number(id)];
+		let q = "delete from users_users where id = $1::INT";
+		let conn = self.pool.get_conn().await;
+		let rows_affected = conn.delete(q, prms).await.unwrap();
+		self.pool.release_conn(conn).await;
+		if rows_affected > 0 {
+			Ok(())
+		} else {
+			Err(Error::Database)
+		}
 	}
 }

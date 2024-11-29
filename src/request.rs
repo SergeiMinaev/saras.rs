@@ -10,7 +10,7 @@ pub trait RequestTools {
 impl RequestTools for Request {
     async fn get_user(&self) -> Option<users::models::User> {
         if self.session_id != "".to_string() {
-            return users::models::User::by_session_id(&self.session_id).await;
+            return users::models::User::by_session_id(&self.session_id).await
         } else { return None }
     }
     async fn is_su(&self) -> bool {

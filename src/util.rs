@@ -46,7 +46,7 @@ fn create_translit_map() -> HashMap<char, &'static str> {
 
 pub fn _translit<T: AsRef<Path>>(input: T, slugify: bool) -> String {
 	let map = create_translit_map();
-	let allowed_specials = "-/.";
+	let allowed_specials = "_-/.";
 	let mut output = String::new();
     for c in input.as_ref().to_str().unwrap().chars() {
 		if slugify && c == ' ' {
