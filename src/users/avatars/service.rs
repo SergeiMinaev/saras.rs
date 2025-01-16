@@ -1,5 +1,4 @@
 use std::path::PathBuf;
-use serde::{ Serialize,Deserialize };
 use log::debug;
 use crate::users::avatars::db::AvatarDb;
 use crate::errors::Error;
@@ -9,10 +8,6 @@ use crate::util::decode_base64;
 use crate::db::get_pool;
 
 
-#[derive(Serialize, Deserialize, Debug)]
-pub struct Avatar {
-	pub path: String,
-}
 
 /// Update user's avatar. To delete avatar send empty string.
 pub async fn update_avatar(user_id: i32, form: &ImageFieldForm) -> Result<(), Error> {

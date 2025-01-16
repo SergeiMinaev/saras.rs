@@ -42,6 +42,11 @@ pub struct Conf {
 	pub image_sizes: Vec<ImageSize>,
 
 	pub selectel: SelectelConf,
+
+	pub vk_auth_url: String,
+	pub ya_auth_url: String,
+	pub ya_auth_client_id: String,
+	pub ya_auth_client_secret: String,
 }
 
 impl Conf {

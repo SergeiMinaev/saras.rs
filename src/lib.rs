@@ -28,3 +28,5 @@ pub use validator::{Validate, ValidationErrors, ValidateArgs};
 //pub use validator_derive::Validate;
 pub use serde;
 pub use serde_json;
+pub use isahc;
+pub use base64;

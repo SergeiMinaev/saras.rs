@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 use std::path::Path;
+use rand::distributions::Alphanumeric;
+use rand::{thread_rng, Rng};
 use base64::{ Engine as _, engine::{ general_purpose } };
 use crate::errors::Error;
 
@@ -68,8 +70,17 @@ pub fn slugify<T: AsRef<Path>>(input: T) -> String {
 	_translit(input, true)
 }
 
+pub fn encode_base64(content: &str) -> String {
+	general_purpose::STANDARD.encode(content)
+}
+
 pub fn decode_base64(content: &str) -> Result<Vec<u8>, Error> {
 	let mut split = content.split(",");
 	let content = split.nth(1).unwrap_or_default();
 	general_purpose::STANDARD.decode(content).map_err(|_| Error::Decode)
+}
+
+
+pub fn random_string(len: usize) -> String {
+	thread_rng().sample_iter(&Alphanumeric).take(len).map(char::from).collect()
 }

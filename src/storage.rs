@@ -8,10 +8,8 @@ use url::Url;
 use serde_json::json;
 use crate::memstore::MEMSTORE;
 use chrono::{Duration};
-use rand::{thread_rng, Rng};
-use rand::distributions::Alphanumeric;
 use crate::conf::CONF;
-use crate::util::norm_path;
+use crate::util::{norm_path, random_string};
 
 pub mod img_storage;
 pub mod errors;
@@ -188,11 +186,6 @@ pub async fn open_local_file(path: &PathBuf) -> Vec<u8> {
 	let mut buffer: Vec<u8> = vec![];
 	file.read_to_end(&mut buffer).unwrap();
 	buffer
-}
-
-
-pub fn random_string(len: usize) -> String {
-	thread_rng().sample_iter(&Alphanumeric).take(len).map(char::from).collect()
 }
 
 

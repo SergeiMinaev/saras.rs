@@ -1,9 +1,8 @@
-use lpsql::QueryParam as qp;
 use crate::users::avatars::models::Avatar;
 use crate::errors::Error;
 use lpsql::pool::ConnectionPool;
+use lpsql::Lpsql;
 use std::sync::Arc;
-use log::debug;
 
 
 
@@ -16,46 +15,22 @@ impl AvatarDb {
 		AvatarDb { pool }
 	}
 	pub async fn by_user_id(&self, user_id: i32) -> Result<Avatar, ()> {
-		let prms: Vec<qp> = vec![
-			qp::Number(user_id)
-		];
 		let query = "select avatar from users_users where id = $1::INT";
-		let conn = self.pool.get_conn().await;
-		let result = match conn.get_one(query, prms).await {
-			None => Err(()),
-			Some(path) => {
-				Ok(Avatar { path: path })
-			}
-		};
-		self.pool.release_conn(conn).await;
-		result
+		let a: Avatar = Lpsql::query(query).bind(user_id).fetch_one(&self.pool).await
+			.and_then(|v| serde_json::from_str(&v).ok()).unwrap();
+		return Ok(a)
 	}
 	pub async fn save(&self, user_id: i32, rel_path: &str) -> Result<(), Error> {
-		let prms: Vec<qp> = vec![
-			qp::Number(user_id),
-			qp::String(rel_path.to_string()),
-		];
-		let query = "update users_users set avatar = $2::TEXT where id = $1::INT";
-		let conn = self.pool.get_conn().await;
-		let _result = conn.exec(query, prms).await.map_err(|err| {
-			panic!("AvatarDB::save failed: {err}");
-			//Error::Database
-		});
-		self.pool.release_conn(conn).await;
-		Ok(())
+		let q = "update users_users set avatar = $2::TEXT where id = $1::INT";
+		let r = Lpsql::query(q).bind(user_id).bind(rel_path).exec(&self.pool).await;
+		if r == 1 {
+			Ok(())
+		} else {
+			Err(Error::Database)
+		}
 	}
 	pub async fn delete(&self, user_id: i32) -> bool {
-		let prms: Vec<qp> = vec![
-			qp::Number(user_id)
-		];
-		let query = "update users_users set avatar = null where id = $1::INT"; //let conn = {
-		let conn = self.pool.get_conn().await;
-		
-		conn.exec(query, prms).await.unwrap_or_else(|err| {
-			//debug!("AvatarDb::delete failed with query: {query}, prms: {:?}", prms);
-			panic!("AvatarDb::delete failed: {err:?}")
-		});
-		self.pool.release_conn(conn).await;
-		true
+		let q = "update users_users set avatar = null where id = $1::INT";
+		Lpsql::query(q).bind(user_id).exec(&self.pool).await != 0
 	}
 }

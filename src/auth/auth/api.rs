@@ -4,7 +4,9 @@ use crate::errors::Error;
 use crate::http::{ Request,Resp, json_resp, del_session_resp };
 use crate::http::JsonResp;
 use crate::request::RequestTools;
-use crate::users::users::models;
+use crate::db::get_pool;
+use crate::users::users::db::UserDb;
+use crate::auth::auth::db::AuthDb;
 
 
 #[derive(Debug, Deserialize)]
@@ -27,7 +29,11 @@ pub async fn login(req: Request) -> Resp {
             if u_.is_valid() == false {
                 return json_resp(401, r#"{"err": "bad_login_input"}"#.to_string())
             }
-            match models::User::by_email(u_.email).await {
+			let pool = get_pool();
+			let userdb = UserDb::new(pool.clone());
+			let authdb = AuthDb::new(pool.clone());
+            //match models::User::by_email(u_.email).await {
+            match userdb.by_email(&u_.email).await {
                 None => {
                     return json_resp(401, r#"{"err": "user_not_found"}"#.to_string())
                 },
@@ -36,8 +42,7 @@ pub async fn login(req: Request) -> Resp {
                         return json_resp(
                             401, r#"{"err": "bad_pwd"}"#.to_string())
                     } else {
-                        if let Some(sess) = u.add_session().await {
-                            //return session_resp(200, Some(sess.id));
+                        if let Some(sess) = authdb.add_session(u.id).await {
                             let r = json!(u);
                             return JsonResp::ok("").content(&r).session_id(sess.id).to_http()
                         } else {

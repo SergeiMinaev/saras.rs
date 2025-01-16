@@ -1,7 +1,6 @@
 use crate::users::users::models::User;
 use crate::users::users::db::UserDb;
 use crate::users::avatars::db::AvatarDb;
-use crate::validation::ValidationErrors;
 use crate::users::avatars::service::{update_avatar,delete_avatar};
 use crate::users::users::forms::UserForm;
 use crate::errors::Error;
@@ -47,5 +46,9 @@ pub async fn update_user(id: i32, user_form: UserForm) -> Result<User, Error> {
 pub async fn delete_user(id: i32) -> Result<(), Error> {
 	let pool = get_pool();
 	let userdb = UserDb::new(pool.clone());
-	userdb.delete(id).await
+	if userdb.delete(id).await == true {
+		Ok(())
+	} else {
+		Err(Error::Database)
+	}
 }

@@ -94,7 +94,7 @@ pub async fn update_user(req: Request) -> Resp {
 pub async fn delete_user(req: Request) -> Resp {
     let id: i32 = req.route.get("id").unwrap().parse().unwrap();
     match service::delete_user(id).await {
-        Err(e) => JsonResp::err("Не удалось удалить пользователя.", &Error::Common).to_http(),
+        Err(_e) => JsonResp::err("Не удалось удалить пользователя.", &Error::Common).to_http(),
         Ok(()) => JsonResp::ok("Пользователь удалён.").to_http(),
     }
 }
