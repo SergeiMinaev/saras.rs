@@ -19,9 +19,17 @@ impl AuthDb {
 		Lpsql::query(query).bind(id).fetch_one(&self.pool).await
 			.and_then(|v| serde_json::from_str(&v).ok())
 	}
-	pub async fn add_session(&self, id: u32) -> Option<Session> {
-		let query = "insert into auth_sessions (user_id) values ($1::INT) returning id";
-		let sess_id: String = Lpsql::query(query).bind(id).fetch_one(&self.pool).await.unwrap();
+	pub async fn add_session(&self, id: Option<u32>) -> Option<Session> {
+		let sess_id = match id {
+			Some(id) => {
+				let q = "insert into auth_sessions (user_id) values ($1::INT) returning id";
+				Lpsql::query(q).bind(id).fetch_one(&self.pool).await.unwrap()
+			},
+			None => {
+				let q = "insert into auth_sessions (user_id) values (null) returning id";
+				Lpsql::query(q).fetch_one(&self.pool).await.unwrap()
+			},
+		};
 		self.by_id(sess_id).await
 	}
 }

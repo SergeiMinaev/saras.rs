@@ -31,7 +31,7 @@ impl UserDb {
 	}
 	pub async fn by_session_id(&self, sess_id: &str) -> Option<User> {
 		let q = "select row_to_json(data) from (\
-			select usr.id, email as label, email, hash, is_superuser \
+			select usr.id, email as label, email, name, hash, is_superuser \
 			from users_users as usr join auth_sessions as session \
 			on usr.id = session.user_id where session.id = $1::BYTEA \
 			and session.expires > now()
@@ -41,7 +41,7 @@ impl UserDb {
 	}
 	pub async fn by_id(&self, id: i32) -> Option<User> {
 		let q = "select row_to_json(data) from (
-			select id, email as label, email, hash, is_superuser,
+			select id, email as label, email, name, hash, is_superuser,
 			case when users.avatar is not null then
 				json_build_object('path', users.avatar)
 			else null end as avatar
@@ -52,7 +52,7 @@ impl UserDb {
 	}
 	pub async fn by_email(&self, email: &str) -> Option<User> {
 		let q = "select row_to_json(data) from (
-			select id, email as label, email, hash, is_superuser,
+			select id, email as label, email, name, hash, is_superuser,
 			case when users.avatar is not null then
 				json_build_object('path', users.avatar)
 			else null end as avatar
@@ -63,7 +63,7 @@ impl UserDb {
 	}
 	pub async fn page(&self, offset: i32, size: i32) -> Vec<User> {
 		let q = "select row_to_json(data) from (
-			select id, email, email as label, hash, is_superuser,
+			select id, email, email as label, name, hash, is_superuser,
 			case when users.avatar is not null then
 				json_build_object('path', users.avatar)
 			else null end as avatar
@@ -104,5 +104,8 @@ impl UserDb {
 		let q = "delete from users_users where id = $1::INT";
 		Lpsql::query(q).bind(id).exec(&self.pool).await != 0
 	}
-
+	pub async fn hash(&self, id: u32) -> String {
+		let q = "select hash from users_users where id = $1::INT";
+		Lpsql::query(q).bind(id).fetch_one(&self.pool).await.unwrap()
+	}
 }

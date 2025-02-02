@@ -16,6 +16,7 @@ pub struct UserForm {
 	#[serde(default)]
 	pub is_superuser: Option<bool>,
 	pub avatar: Option<ImageFieldForm>,
+	pub name: Option<String>,
 }
 
 impl Default for UserForm {
@@ -25,6 +26,7 @@ impl Default for UserForm {
 			pwd: None,
 			is_superuser: Some(false),
 			avatar: None,
+			name: None,
 		}
 	}
 }

@@ -5,5 +5,5 @@ use serde::{ Serialize,Deserialize };
 pub struct Session {
 	pub id: String,
 	pub expires: String,
-	pub user_id: u32,
+	pub user_id: Option<u32>,
 }

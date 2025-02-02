@@ -31,16 +31,17 @@ pub async fn login_by_email(email: &str) -> Option<Session> {
 				pwd: None, // без пароля - вход через OAuth
 				is_superuser: Some(false),
 				avatar: None,
+				name: None,
 			};
 			debug!("Нужно создать: {form:?}");
 			let user = userdb.create_and_get(form).await.unwrap();
 			debug!("444");
-			return authdb.add_session(user.id).await
+			return authdb.add_session(Some(user.id)).await
 		},
 		Some(u) => {
 			debug!("Добавляю сессию к имеющемуся");
 			debug!("555");
-			return authdb.add_session(u.id).await
+			return authdb.add_session(Some(u.id)).await
 		},
 	};
 }

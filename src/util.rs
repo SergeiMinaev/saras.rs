@@ -1,10 +1,16 @@
 use std::collections::HashMap;
 use std::path::Path;
+use std::time::Duration;
+use smol::Timer;
 use rand::distributions::Alphanumeric;
 use rand::{thread_rng, Rng};
 use base64::{ Engine as _, engine::{ general_purpose } };
 use crate::errors::Error;
 
+
+pub async fn sleep(sec: u64) {
+	Timer::after(Duration::from_secs(sec)).await;
+}
 
 pub fn norm_path(path: String) -> String {
     let mut result = String::new();

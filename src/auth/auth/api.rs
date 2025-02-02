@@ -32,17 +32,17 @@ pub async fn login(req: Request) -> Resp {
 			let pool = get_pool();
 			let userdb = UserDb::new(pool.clone());
 			let authdb = AuthDb::new(pool.clone());
-            //match models::User::by_email(u_.email).await {
             match userdb.by_email(&u_.email).await {
                 None => {
                     return json_resp(401, r#"{"err": "user_not_found"}"#.to_string())
                 },
                 Some(u) => {
-                    if u.check_password(u_.pwd) == false {
+					let hash = userdb.hash(u.id).await;
+                    if u.check_password(u_.pwd, hash) == false {
                         return json_resp(
                             401, r#"{"err": "bad_pwd"}"#.to_string())
                     } else {
-                        if let Some(sess) = authdb.add_session(u.id).await {
+                        if let Some(sess) = authdb.add_session(Some(u.id)).await {
                             let r = json!(u);
                             return JsonResp::ok("").content(&r).session_id(sess.id).to_http()
                         } else {
