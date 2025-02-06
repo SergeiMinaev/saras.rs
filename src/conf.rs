@@ -47,6 +47,10 @@ pub struct Conf {
 	pub ya_auth_url: String,
 	pub ya_auth_client_id: String,
 	pub ya_auth_client_secret: String,
+
+	pub smtp_server: String,
+	pub smtp_login: String,
+	pub smtp_pwd: String,
 }
 
 impl Conf {

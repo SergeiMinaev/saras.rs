@@ -90,3 +90,4 @@ pub fn decode_base64(content: &str) -> Result<Vec<u8>, Error> {
 pub fn random_string(len: usize) -> String {
 	thread_rng().sample_iter(&Alphanumeric).take(len).map(char::from).collect()
 }
+

@@ -79,10 +79,19 @@ impl UserDb {
 		let salt = SaltString::generate(&mut OsRng);
 		let pwd = data.pwd.clone().unwrap_or_else(|| random_string(32));
 		let hash = argon2.hash_password(&pwd.into_bytes(), &salt).unwrap().to_string();
-		let q = "insert into users_users (email, hash) values ($1::TEXT, $2::TEXT) returning id";
-		Lpsql::query(q).bind(data.email).bind(hash)
-			.fetch_one(&self.pool).await
-			.map(|id| id.parse().unwrap())
+		if let Some(name) = data.name {
+			let q = "insert into users_users (email, name, hash)
+				values ($1::TEXT, $2::TEXT, $3::TEXT) returning id";
+			Lpsql::query(q).bind(data.email).bind(name).bind(hash)
+				.fetch_one(&self.pool).await
+				.map(|id| id.parse().unwrap())
+		} else {
+			let q = "insert into users_users (email, hash)
+				values ($1::TEXT, $2::TEXT) returning id";
+			Lpsql::query(q).bind(data.email).bind(hash)
+				.fetch_one(&self.pool).await
+				.map(|id| id.parse().unwrap())
+		}
 	}
 	pub async fn create_and_get(&self, form: UserForm) -> Option<User> {
 		let id = self.create(form).await?;

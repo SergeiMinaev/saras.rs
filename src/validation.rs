@@ -58,9 +58,55 @@ pub fn parse_deser_error(e: serde_json::Error) -> ValidationErrors {
 		errs.0.insert(field.to_string(), err);
 	} else {
 		// example: "invalid type: string \"sixteen\", expected i32", line: 1, column: 80
-		errs.0.insert("what".to_string(), make_validation_error("lol", "wtf"));
+		//errs.0.insert("what".to_string(), make_validation_error("lol", "wtf"));
 		let err = make_validation_error("bad_type", "Одно из полей имеет неправильный тип.");
 		errs.0.insert("__base".to_string(), err);
 	}
 	return errs
+}
+
+
+pub fn validate_pwd(pwd: &str) -> Result<(), ValidationError> {
+	/// Password requirements: >= 12 chars, at least one uppercase, lowercase and a digit.
+    if pwd.len() < 12 {
+		return Err(ValidationError::new("Пароль не должен быть короче 12 символов."))
+    }
+
+    let mut has_lowercase = false;
+    for char in pwd.chars() {
+        if char.is_lowercase() {
+            has_lowercase = true;
+            break;
+        }
+    }
+    if !has_lowercase {
+		return Err(
+			ValidationError::new("Пароль должен содержать хотя бы одну букву в нижнем регистре.")
+		)
+    }
+
+    let mut has_uppercase = false;
+    for char in pwd.chars() {
+        if char.is_uppercase() {
+            has_uppercase = true;
+            break;
+        }
+    }
+    if !has_uppercase {
+		return Err(
+			ValidationError::new("Пароль должен содержать хотя бы одну букву в верхнем регистре.")
+		)
+    }
+
+    let mut has_digit = false;
+    for char in pwd.chars() {
+        if char.is_numeric() {
+            has_digit = true;
+            break;
+        }
+    }
+    if !has_digit {
+		return Err(ValidationError::new("Пароль должен содержать хотя бы одну цифру."))
+    }
+	Ok(())
 }

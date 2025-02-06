@@ -7,6 +7,8 @@ use crate::request::RequestTools;
 use crate::db::get_pool;
 use crate::users::users::db::UserDb;
 use crate::auth::auth::db::AuthDb;
+use crate::auth::auth::forms::make_regform;
+use log::debug;
 
 
 #[derive(Debug, Deserialize)]
@@ -19,6 +21,7 @@ impl LoginInput {
         return self.email.len() < 255 && self.pwd.len() < 255
     }
 }
+
 
 pub async fn login(req: Request) -> Resp {
     match serde_json::from_str::<LoginInput>(&req.body_string) {

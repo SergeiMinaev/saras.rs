@@ -49,7 +49,6 @@ impl MemStore {
         if item.expiry > Some(Utc::now()) {
           return Some(item.value.clone())
         } else {
-          println!("EXPIRED");
           self.del(key);
           return None
         }
