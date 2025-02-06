@@ -18,7 +18,7 @@ async-net = "2.0"
 async-std = "1.13.0"
 base64 = "0.22.0"
 bincode = "1.3"
-chrono = "0.4"
+chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.5.1", features = ["derive"] }
 futures-lite = "2.2"
 isahc = "1.7.2"

@@ -26,6 +26,7 @@ impl StreamHandler {
 		Self { stream: stream }
 	}
 	pub async fn write_resp(&mut self, resp: &Resp) {
-		let _ = self.stream.write(&resp.get_resp_bytes()).await;
+		let _ = self.stream.write_all(&resp.get_resp_bytes()).await;
+		let _ = self.stream.flush().await;
 	}
 }
