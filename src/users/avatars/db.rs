@@ -29,6 +29,15 @@ impl AvatarDb {
 			Err(Error::Database)
 		}
 	}
+	pub async fn save_default(&self, user_id: i32, rel_path: &str) -> Result<(), Error> {
+		let q = "update users_users set default_avatar = $2::TEXT where id = $1::INT";
+		let r = Lpsql::query(q).bind(user_id).bind(rel_path).exec(&self.pool).await;
+		if r == 1 {
+			Ok(())
+		} else {
+			Err(Error::Database)
+		}
+	}
 	pub async fn delete(&self, user_id: i32) -> bool {
 		let q = "update users_users set avatar = null where id = $1::INT";
 		Lpsql::query(q).bind(user_id).exec(&self.pool).await != 0

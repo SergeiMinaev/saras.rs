@@ -29,6 +29,7 @@ pub struct User {
 	pub hash: String,
 	pub is_superuser: bool,
 	pub avatar: Option<ImageField>,
+	pub default_avatar: Option<ImageField>,
 	pub name: Option<String>,
 }
 

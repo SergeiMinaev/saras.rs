@@ -31,9 +31,15 @@ impl UserDb {
 	}
 	pub async fn by_session_id(&self, sess_id: &str) -> Option<User> {
 		let q = "select row_to_json(data) from (\
-			select usr.id, email as label, email, name, hash, is_superuser \
-			from users_users as usr join auth_sessions as session \
-			on usr.id = session.user_id where session.id = $1::BYTEA \
+			select users.id, email as label, email, name, hash, is_superuser,
+			case when users.avatar is not null then
+				json_build_object('path', users.avatar)
+			else null end as avatar,
+			case when users.default_avatar is not null then
+				json_build_object('path', users.default_avatar)
+			else null end as default_avatar
+			from users_users as users join auth_sessions as session \
+			on users.id = session.user_id where session.id = $1::BYTEA \
 			and session.expires > now()
 		) data";
 		Lpsql::query(q).bind(sess_id).fetch_one(&self.pool).await
@@ -44,7 +50,10 @@ impl UserDb {
 			select id, email as label, email, name, hash, is_superuser,
 			case when users.avatar is not null then
 				json_build_object('path', users.avatar)
-			else null end as avatar
+			else null end as avatar,
+			case when users.default_avatar is not null then
+				json_build_object('path', users.default_avatar)
+			else null end as default_avatar
 			from users_users as users where id = $1::INT
 		) data";
 		Lpsql::query(q).bind(id).fetch_one(&self.pool).await
@@ -55,7 +64,10 @@ impl UserDb {
 			select id, email as label, email, name, hash, is_superuser,
 			case when users.avatar is not null then
 				json_build_object('path', users.avatar)
-			else null end as avatar
+			else null end as avatar,
+			case when users.default_avatar is not null then
+				json_build_object('path', users.default_avatar)
+			else null end as default_avatar
 			from users_users as users where email = $1::TEXT
 		) data";
 		Lpsql::query(q).bind(email).fetch_one(&self.pool).await
@@ -66,7 +78,10 @@ impl UserDb {
 			select id, email, email as label, name, hash, is_superuser,
 			case when users.avatar is not null then
 				json_build_object('path', users.avatar)
-			else null end as avatar
+			else null end as avatar,
+			case when users.default_avatar is not null then
+				json_build_object('path', users.default_avatar)
+			else null end as default_avatar
 			from users_users as users
 			order by id offset $1::INT limit $2::INT
 		) data";

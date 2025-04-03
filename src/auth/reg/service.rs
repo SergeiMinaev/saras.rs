@@ -22,6 +22,7 @@ use crate::http::JsonResp;
 use chrono::{Duration, Utc, DateTime};
 use rand::{Rng, thread_rng};
 use serde::{Deserialize, Serialize};
+use crate::users::avatars::service::save_default_avatar;
 use lettre::{Message, SmtpTransport, Transport};
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::message::{Mailbox, header::ContentType};
@@ -76,7 +77,12 @@ pub async fn send_code(email: &str, sess_id: &str) -> String {
 	let code_str = serde_json::to_string(&code_obj).unwrap();
 	store.set(email.to_string(), code_str.clone(), Some(lifetime));
 	store.set(sess_id.to_string(), code_str, Some(lifetime));
-	send_code_email(email, &code.clone()).await;
+	let conf = CONF.read().await;
+	if conf.is_dev == false {
+		send_code_email(email, &code.clone()).await;
+	} else {
+		println!("reg code: {code}");
+	}
 	code
 }
 
@@ -184,7 +190,10 @@ pub async fn finish_reg(form: &RegForm, sess_id: &str) -> Resp {
 	};
 	let pool = get_pool();
 	let userdb = UserDb::new(pool);
-	userdb.create(userform).await;
+	let user_id = userdb.create(userform).await.unwrap();
+	smol::spawn(async move {
+		let _ = save_default_avatar(user_id).await;
+	}).detach();
 	drop_code(&form.email, sess_id).await;
 	let j = json!({"reg_complete": true});
 	JsonResp::ok("Регистрация завершена.").content(&j).to_http()
