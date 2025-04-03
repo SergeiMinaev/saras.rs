@@ -15,10 +15,28 @@ impl AvatarDb {
 		AvatarDb { pool }
 	}
 	pub async fn by_user_id(&self, user_id: i32) -> Result<Avatar, ()> {
-		let query = "select avatar from users_users where id = $1::INT";
-		let a: Avatar = Lpsql::query(query).bind(user_id).fetch_one(&self.pool).await
-			.and_then(|v| serde_json::from_str(&v).ok()).unwrap();
-		return Ok(a)
+		let query = "select
+			case when avatar is not null then
+				json_build_object('path', avatar)
+			else null end as avatar
+			from users_users where id = $1::INT";
+		let a = Lpsql::query(query).bind(user_id).fetch_one(&self.pool).await.ok_or(())?;
+		if a.is_empty() {
+			return Err(());
+		}
+		serde_json::from_str(&a).map_err(|_| ())
+	}
+	pub async fn default_by_user_id(&self, user_id: i32) -> Result<Avatar, ()> {
+		let query = "select
+			case when default_avatar is not null then
+				json_build_object('path', default_avatar)
+			else null end as default_avatar
+			from users_users where id = $1::INT";
+		let a = Lpsql::query(query).bind(user_id).fetch_one(&self.pool).await.ok_or(())?;
+		if a.is_empty() {
+			return Err(());
+		}
+		serde_json::from_str(&a).map_err(|_| ())
 	}
 	pub async fn save(&self, user_id: i32, rel_path: &str) -> Result<(), Error> {
 		let q = "update users_users set avatar = $2::TEXT where id = $1::INT";
@@ -40,6 +58,10 @@ impl AvatarDb {
 	}
 	pub async fn delete(&self, user_id: i32) -> bool {
 		let q = "update users_users set avatar = null where id = $1::INT";
+		Lpsql::query(q).bind(user_id).exec(&self.pool).await != 0
+	}
+	pub async fn delete_default(&self, user_id: i32) -> bool {
+		let q = "update users_users set default_avatar = null where id = $1::INT";
 		Lpsql::query(q).bind(user_id).exec(&self.pool).await != 0
 	}
 }

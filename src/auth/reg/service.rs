@@ -22,7 +22,7 @@ use crate::http::JsonResp;
 use chrono::{Duration, Utc, DateTime};
 use rand::{Rng, thread_rng};
 use serde::{Deserialize, Serialize};
-use crate::users::avatars::service::save_default_avatar;
+use crate::users::avatars::service::update_default_avatar;
 use lettre::{Message, SmtpTransport, Transport};
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::message::{Mailbox, header::ContentType};
@@ -192,7 +192,7 @@ pub async fn finish_reg(form: &RegForm, sess_id: &str) -> Resp {
 	let userdb = UserDb::new(pool);
 	let user_id = userdb.create(userform).await.unwrap();
 	smol::spawn(async move {
-		let _ = save_default_avatar(user_id).await;
+		let _ = update_default_avatar(user_id).await;
 	}).detach();
 	drop_code(&form.email, sess_id).await;
 	let j = json!({"reg_complete": true});

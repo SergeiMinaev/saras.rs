@@ -1,6 +1,6 @@
 use crate::db::get_pool;
 use crate::users::users::db::UserDb;
-use crate::users::avatars::service::save_default_avatar;
+use crate::users::avatars::service::update_default_avatar;
 
 
 pub async fn gen_default_avatars() {
@@ -11,7 +11,7 @@ pub async fn gen_default_avatars() {
     loop {
         let page_users = userdb.page(offset, size).await;
         for user in &page_users {
-            save_default_avatar(user.id.try_into().unwrap()).await;
+            update_default_avatar(user.id.try_into().unwrap()).await;
         }
         if page_users.is_empty() {
             break;

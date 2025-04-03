@@ -54,10 +54,34 @@ pub async fn delete_avatar(user_id: i32) -> Result<(), Error> {
 }
 
 
-pub async fn save_default_avatar(user_id: i32) -> Result<(), Error> {
+pub async fn delete_default_avatar(user_id: i32) -> Result<(), Error> {
+	let pool = get_pool();
+	let avatardb = AvatarDb::new(pool);
+	match avatardb.default_by_user_id(user_id).await {
+		Err(()) => Error::Database,
+		Ok(existing_avatar) => {
+			let img_storage = ImageStorage::new();
+			match img_storage.delete(&PathBuf::from(existing_avatar.path)).await {
+				Ok(_) => {
+					avatardb.delete_default(user_id).await;
+					return Ok(())
+				},
+				Err(e) => return Err(e)
+			}
+		}
+	};
+	Ok(())
+}
+
+
+pub async fn update_default_avatar(user_id: i32) -> Result<(), Error> {
+	delete_default_avatar(user_id).await;
 	let pool = get_pool();
 	let userdb = UserDb::new(pool.clone());
 	let user = userdb.by_id(user_id).await.unwrap();
+	if user.name.is_none() {
+		return Ok(())
+	}
 	let name = user.name.unwrap();
 	let ava = generate_avatar(&name);
 	let img_storage = ImageStorage::new();
