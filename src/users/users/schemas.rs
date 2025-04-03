@@ -12,8 +12,8 @@ pub fn admin_schemas() -> Value {
 	json!({
 	"meta": model_meta::<User>(),
 	"admin": {
-		"list_fields": ["id", "email", "avatar", "is_superuser"],
-		"item_fields": ["id", "email", "avatar", "is_superuser", "hash"],
+		"list_fields": ["id", "email", "name", "avatar", "is_superuser"],
+		"item_fields": ["id", "email", "name", "avatar", "is_superuser", "hash"],
 	},
 	"schemas": {
 		"view": user_view_schema(),

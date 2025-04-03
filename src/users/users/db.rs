@@ -113,6 +113,13 @@ impl UserDb {
 		self.by_id(id).await
 	}
 	pub async fn update(&self, id: i32, data: UserForm) -> Option<i32> {
+		if data.name.is_some() {
+			let q = "update users_users set name = $2::TEXT
+				where id = $1::INT
+				returning id";
+			let _ = Lpsql::query(q).bind(id).bind(data.name.unwrap())
+				.fetch_one(&self.pool).await;
+		}
 		let q = "update users_users set email = $2::TEXT, is_superuser = $3::BOOL 
 			where id = $1::INT
 			returning id";
