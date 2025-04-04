@@ -19,10 +19,12 @@ pub async fn profile(req: Request) -> Resp {
 
 
 pub async fn get_profile(req: Request) -> Resp {
-	let name: &str = req.route.get("name").unwrap();
+	//let name: &str = req.route.get("name").unwrap();
+    let id: i32 = req.route.get("id").unwrap().parse().unwrap();
 	let pool = get_pool();
 	let profiledb = ProfileDb::new(pool.clone());
-	match profiledb.by_name(name).await {
+	//match profiledb.by_name(name).await {
+	match profiledb.by_id(id).await {
 		Some(profile) => {
 			let r = json!(profile);
 			return JsonResp::ok("").content(&r).to_http()
