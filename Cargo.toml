@@ -35,6 +35,7 @@ smol = "2.0.2"
 toml = "0.8"
 validator = { version = "0.15", features = ["derive"] }
 url = "2.5.0"
+uuid = { version = "1.8", features = ["v4"] }
 log = "0.4"
 md5 = "0.7.0"
 palette = "0.7.6"
