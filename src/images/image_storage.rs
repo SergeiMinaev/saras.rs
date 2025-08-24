@@ -40,7 +40,7 @@ impl ImageStorage {
 	}
 	pub async fn save(&self, data: Vec<u8>, path: &PathBuf) -> Result<PathBuf, Error> {
 		let format: &str = path.extension().unwrap().to_str().unwrap();
-		let png_path = img_shrink::make_png(&data, format);
+		let png_path = img_shrink::to_png(&data, format);
 
 		let conf = CONF.read().await;
 		let main_format = &conf.main_image_format;
@@ -50,7 +50,7 @@ impl ImageStorage {
 		let path = self.storage.get_unique_path(&path).await?;
 
 		let crop = false;
-		let main_tmp = img_shrink::make_version_auto_from_png(
+		let main_tmp = img_shrink::encode_from_png_adaptive(
 			&png_path, main_format, &conf.main_image_size, crop
 		);
 		let main_img_data = open_local_file(&main_tmp.path().to_path_buf()).await;
@@ -64,7 +64,7 @@ impl ImageStorage {
 			for size in &conf.image_sizes {
 				let mut path = PathBuf::from(size.size.clone()).join(path);
 				path.set_extension(format);
-				let variant_tmp = img_shrink::make_version_auto_from_png(
+				let variant_tmp = img_shrink::encode_from_png_adaptive(
 					&png_path, format, &size.size, size.crop
 				);
 				let variant_data = open_local_file(&variant_tmp.path().to_path_buf()).await;
