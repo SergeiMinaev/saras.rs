@@ -50,10 +50,10 @@ impl ImageStorage {
 		let path = self.storage.get_unique_path(&path).await?;
 
 		let crop = false;
-		let main_img_path: PathBuf = img_shrink::make_version(
+		let main_tmp = img_shrink::make_version_auto_from_png(
 			&png_path, main_format, &conf.main_image_size, crop
 		);
-		let main_img_data = open_local_file(&main_img_path).await;
+		let main_img_data = open_local_file(&main_tmp.path().to_path_buf()).await;
 		let mut result_path = self.storage.save(main_img_data, &path).await?;
 		result_path.set_extension("");
 		let result_path = result_path.strip_prefix("orig").unwrap().to_path_buf();
@@ -64,10 +64,10 @@ impl ImageStorage {
 			for size in &conf.image_sizes {
 				let mut path = PathBuf::from(size.size.clone()).join(path);
 				path.set_extension(format);
-				let variant_path_tmp: PathBuf = img_shrink::make_version(
+				let variant_tmp = img_shrink::make_version_auto_from_png(
 					&png_path, format, &size.size, size.crop
 				);
-				let variant_data = open_local_file(&variant_path_tmp).await;
+				let variant_data = open_local_file(&variant_tmp.path().to_path_buf()).await;
 				let variant_path = self.storage.save(variant_data, &path).await?;
 				debug!("variant: {}", variant_path.display());
 			}
