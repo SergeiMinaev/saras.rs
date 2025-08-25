@@ -5,6 +5,7 @@ use crate::storage::storage::Storage;
 use crate::storage::util::open_local_file;
 use crate::conf::CONF;
 use crate::util::norm_path;
+use img_shrink::EncodeOptionsBuilder;
 
 pub struct ImageStorage {
 	storage: Storage,
@@ -39,8 +40,7 @@ impl ImageStorage {
 		Ok(())
 	}
 	pub async fn save(&self, data: Vec<u8>, path: &PathBuf) -> Result<PathBuf, Error> {
-		let format: &str = path.extension().unwrap().to_str().unwrap();
-		let png_path = img_shrink::to_png(&data, format);
+		let orig_format: &str = path.extension().unwrap().to_str().unwrap();
 
 		let conf = CONF.read().await;
 		let main_format = &conf.main_image_format;
@@ -49,10 +49,10 @@ impl ImageStorage {
 		path.set_extension(main_format);
 		let path = self.storage.get_unique_path(&path).await?;
 
-		let crop = false;
-		let main_tmp = img_shrink::encode_from_png_adaptive(
-			&png_path, main_format, &conf.main_image_size, crop
-		);
+		let enc_opts = img_shrink::EncodeOptionsBuilder::new()
+			.size(&conf.main_image_size)
+			.build();
+		let main_tmp = img_shrink::encode(&data, orig_format, main_format, enc_opts);
 		let main_img_data = open_local_file(&main_tmp.path().to_path_buf()).await;
 		let mut result_path = self.storage.save(main_img_data, &path).await?;
 		result_path.set_extension("");
@@ -64,9 +64,10 @@ impl ImageStorage {
 			for size in &conf.image_sizes {
 				let mut path = PathBuf::from(size.size.clone()).join(path);
 				path.set_extension(format);
-				let variant_tmp = img_shrink::encode_from_png_adaptive(
-					&png_path, format, &size.size, size.crop
-				);
+				let enc_opts = img_shrink::EncodeOptionsBuilder::new()
+					.size(&size.size)
+					.build();
+				let variant_tmp = img_shrink::encode(&data, orig_format, format, enc_opts);
 				let variant_data = open_local_file(&variant_tmp.path().to_path_buf()).await;
 				let variant_path = self.storage.save(variant_data, &path).await?;
 				debug!("variant: {}", variant_path.display());

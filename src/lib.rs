@@ -30,3 +30,4 @@ pub use serde;
 pub use serde_json;
 pub use isahc;
 pub use base64;
+pub use img_shrink;
