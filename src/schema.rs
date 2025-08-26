@@ -40,11 +40,34 @@ pub fn validate(schema: &RootSchema, data: &Value) -> ValidationResult {
 }
 
 
+fn pluralize(s: &str) -> String {
+    if s.ends_with('y')
+        && !s.ends_with("ay")
+        && !s.ends_with("ey")
+        && !s.ends_with("iy")
+        && !s.ends_with("oy")
+        && !s.ends_with("uy")
+    {
+        let mut t = s[..s.len() - 1].to_string();
+        t.push_str("ies");
+        t
+    } else if s.ends_with('s')
+        || s.ends_with('x')
+        || s.ends_with('z')
+        || s.ends_with("ch")
+        || s.ends_with("sh")
+    {
+        format!("{s}es")
+    } else {
+        format!("{s}s")
+    }
+}
+
 pub fn model_meta<T: JsonSchema + BaseModel >() -> Value {
   let mut split = type_name::<T>().split("::");
   let ctg = split.nth(1).unwrap();
   let model = split.nth(2).unwrap();
-  let endpoint = format!("{ctg}/{}", model.to_lowercase() + "s");
+  let endpoint = format!("{ctg}/{}", pluralize(&model.to_lowercase()));
   return json!({
     "endpoint": endpoint, "model_name": model,
     "name": T::NAME, "name_plural": T::NAME_PLURAL
