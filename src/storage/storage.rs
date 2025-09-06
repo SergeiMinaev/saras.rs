@@ -113,20 +113,32 @@ impl Storage {
 	pub async fn save(&self, data: Vec<u8>, path: &PathBuf) -> Result<PathBuf, Error> {
 		let is_fixed_path = false;
 		let is_force_overwrite = false;
-		self._save(data, path, is_fixed_path, is_force_overwrite).await
+		self._save(data, path, is_fixed_path, is_force_overwrite, false).await
+	}
+
+	/// Save brotli-compressed `data` making sure the object is uploaded
+	/// with the `Content-Encoding: br` header.
+	///
+	/// Pass the desired final object `path` *without* the `.br` suffix:
+	/// browsers will download and transparently decompress it.
+	pub async fn save_br(&self, data: Vec<u8>, path: &PathBuf) -> Result<PathBuf, Error> {
+		let compressed = crate::storage::util::compress_br(&data);
+		let is_fixed_path = false;
+		let is_force_overwrite = false;
+		self._save(compressed, path, is_fixed_path, is_force_overwrite, true).await
 	}
 	pub async fn save_fixed(&self, data: Vec<u8>, path: &PathBuf) -> Result<(), Error> {
 		let is_fixed_path = true;
 		let is_force_overwrite = false;
-		self._save(data, path, is_fixed_path, is_force_overwrite).await.map(|_| ())
+		self._save(data, path, is_fixed_path, is_force_overwrite, false).await.map(|_| ())
 	}
 	pub async fn save_force_overwrite(&self, data: Vec<u8>, path: &PathBuf) -> Result<(), Error> {
 		let is_fixed_path = true;
 		let is_force_overwrite = true;
-		self._save(data, path, is_fixed_path, is_force_overwrite).await.map(|_| ())
+		self._save(data, path, is_fixed_path, is_force_overwrite, false).await.map(|_| ())
 	}
 	pub async fn _save(&self, data: Vec<u8>, path: &PathBuf,
-		fixed_path: bool, is_force_overwrite: bool
+		fixed_path: bool, is_force_overwrite: bool, is_br: bool
 	) -> Result<PathBuf, Error> {
 		let mut path = path.clone();
 		if fixed_path {
@@ -142,10 +154,23 @@ impl Storage {
 		let url = get_api_url(&path).await;
 		//debug!("Storage save url{}", url);
 
-		let resp = isahc::Request::builder()
+		// add Content-Encoding: br when uploading pre-compressed *.br objects
+		let is_br = is_br || path
+			.extension()
+			.and_then(|e| e.to_str())
+			.map(|s| s.eq_ignore_ascii_case("br"))
+			.unwrap_or(false);
+
+		let mut req_builder = isahc::Request::builder()
 			.method("PUT")
 			.uri(url)
-			.header("X-Auth-Token", self.get_token().await)
+			.header("X-Auth-Token", self.get_token().await);
+
+		if is_br {
+			req_builder = req_builder.header("Content-Encoding", "br");
+		}
+
+		let resp = req_builder
 			.body(Body::from(data))
 			.unwrap()
 			.send()
