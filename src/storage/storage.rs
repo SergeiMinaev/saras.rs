@@ -3,6 +3,7 @@ use chrono::{Duration};
 use isahc::http::status::StatusCode;
 use isahc::prelude::*;
 use isahc::Body;
+use isahc::AsyncBody;
 use std::io::Cursor;
 use brotli::Decompressor;
 //use log::debug;
@@ -14,6 +15,7 @@ use crate::conf::CONF;
 use crate::memstore::MEMSTORE;
 //use crate::storage::msgs;
 use crate::util::slugify;
+use futures_lite::io::AsyncReadExt;
 
 
 const TOKEN_KEY: &str = "storage_token";
@@ -68,15 +70,21 @@ impl Storage {
 			.method("GET")
 			.uri(url.clone())
 			.header("X-Auth-Token", token)
-			.body(());
-		let resp = req.unwrap().send().map_err(|_| Error::Storage)?;
+			.body(())
+			.map_err(|_| Error::Storage)?;
+		let mut resp = req.send_async().await.map_err(|_| Error::Storage)?;
 		Ok(resp.status() == StatusCode::OK)
 	}
 	pub async fn open(&self, path: &PathBuf) -> Result<Vec<u8>, Error> {
-		let url = get_api_url(path).await;
+		// If `path` is an absolute URL (starts with http:// or https://),
+		// use it directly; otherwise build the API URL based on the configured base.
+		let url = match path.to_str() {
+			Some(s) if s.starts_with("http://") || s.starts_with("https://") => s.to_string(),
+			_ => get_api_url(path).await,
+		};
 
-		// Build a client with automatic decompression turned OFF so isahc
-		// does not try to handle "br" itself (it doesn't support brotli).
+		// Build an async client with automatic decompression turned OFF so isahc
+		// does not try to handle "br" itself (we will decode manually).
 		// NOTE: building a new HttpClient on every call is wasteful; consider
 		// reusing a single client instance stored on `Storage`.
 		let client = isahc::HttpClient::builder()
@@ -91,19 +99,29 @@ impl Storage {
 			.body(())
 			.map_err(|_| Error::Storage)?;
 
-		let mut resp = client.send(req).map_err(|_| Error::Storage)?;
+		let mut resp = client.send_async(req).await.map_err(|_| Error::Storage)?;
 		if resp.status() != StatusCode::OK {
 			return Err(Error::Storage)
 		}
-		let bytes = resp.bytes().map_err(|_| Error::Storage)?;
-		let is_br = resp.headers().get("Content-Encoding")
+
+		// Read Content-Encoding header before consuming the response body,
+		// because `into_body()` takes ownership of `resp`.
+		let is_br_header = resp.headers().get("Content-Encoding")
 			.and_then(|v| v.to_str().ok())
 			.map(|s| s.eq_ignore_ascii_case("br"))
-			.unwrap_or(false)
+			.unwrap_or(false);
+
+		// Read the async response body into a Vec<u8>.
+		let mut body = resp.into_body();
+		let mut bytes: Vec<u8> = Vec::new();
+		futures_lite::io::AsyncReadExt::read_to_end(&mut body, &mut bytes).await.map_err(|_| Error::Storage)?;
+
+		let is_br = is_br_header
 			|| path.extension()
 				.and_then(|e| e.to_str())
 				.map(|s| s.eq_ignore_ascii_case("br"))
 				.unwrap_or(false);
+
 		if is_br {
 			let mut out: Vec<u8> = Vec::new();
 			let mut cursor = Cursor::new(bytes);
@@ -126,9 +144,15 @@ impl Storage {
 			.header("X-Auth-Token", self.get_token().await)
 			.body(())
 			.unwrap()
-			.send()
+			.send_async().await
 			.unwrap();
-		let data = resp.text().unwrap();
+
+		// Read body into bytes and convert to UTF-8 string (preserve the previous unwrap behavior).
+		let mut body = resp.into_body();
+		let mut bytes: Vec<u8> = Vec::new();
+		futures_lite::io::AsyncReadExt::read_to_end(&mut body, &mut bytes).await.unwrap();
+		let data = String::from_utf8(bytes).unwrap();
+
 		data.split("\n")
 			.filter( |s| !s.is_empty() && (s.contains(".") || s.ends_with("/")) )
 			.map( |s| s.strip_prefix("orig/").unwrap_or(s).to_string())
@@ -139,14 +163,14 @@ impl Storage {
 		let token = self.get_token().await;
 		let url = get_api_url(&path).await;
 		//debug!("Storage delete url {}", url);
-		let resp = isahc::Request::builder()
+		let mut resp = isahc::Request::builder()
 			.method("DELETE")
 			.uri(url)
 			.header("X-Auth-Token", token)
 			.body(())
 			.unwrap()
-			.send().
-			map_err(|_| Error::Storage)?;
+			.send_async().await
+			.map_err(|_| Error::Storage)?;
 		//debug!("storage resp: {resp:?}");
 		//debug!("storage status: {:?}", resp.status());
 		match resp.status() {
@@ -214,11 +238,10 @@ impl Storage {
 			req_builder = req_builder.header("Content-Encoding", "br");
 		}
 
-		let resp = req_builder
-			.body(Body::from(data))
-			.unwrap()
-			.send()
-			.unwrap();
+		let req = req_builder
+			.body(AsyncBody::from(data))
+			.map_err(|_| Error::Storage)?;
+		let mut resp = req.send_async().await.map_err(|_| Error::Storage)?;
 		if resp.status() != StatusCode::CREATED {
 			//debug!("API resp: {resp:?}");
 			return Err(Error::Storage)
