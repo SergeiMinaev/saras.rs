@@ -3,6 +3,8 @@ use chrono::{Duration};
 use isahc::http::status::StatusCode;
 use isahc::prelude::*;
 use isahc::Body;
+use std::io::Cursor;
+use brotli::Decompressor;
 //use log::debug;
 use serde_json::json;
 use rand::{thread_rng, Rng};
@@ -69,6 +71,32 @@ impl Storage {
 			.body(());
 		let resp = req.unwrap().send().map_err(|_| Error::Storage)?;
 		Ok(resp.status() == StatusCode::OK)
+	}
+	pub async fn open(&self, path: &PathBuf) -> Result<Vec<u8>, Error> {
+		let url = get_api_url(path).await;
+		let req = isahc::Request::builder()
+			.method("GET")
+			.uri(url)
+			.header("X-Auth-Token", self.get_token().await)
+			.body(());
+		let mut resp = req.unwrap().send().map_err(|_| Error::Storage)?;
+		if resp.status() != StatusCode::OK {
+			return Err(Error::Storage)
+		}
+		let bytes = resp.bytes().map_err(|_| Error::Storage)?;
+		let is_br = resp.headers().get("Content-Encoding")
+			.and_then(|v| v.to_str().ok())
+			.map(|s| s.eq_ignore_ascii_case("br"))
+			.unwrap_or(false);
+		if is_br {
+			let mut out: Vec<u8> = Vec::new();
+			let mut cursor = Cursor::new(bytes);
+			let mut dec = Decompressor::new(&mut cursor, 4096);
+			std::io::copy(&mut dec, &mut out).map_err(|_| Error::Storage)?;
+			Ok(out)
+		} else {
+			Ok(bytes)
+		}
 	}
 	pub async fn ls(&self, path: &PathBuf) -> Vec<String> {
 		let url = format!(
