@@ -1,6 +1,7 @@
 use std::fmt;
 
 
+#[derive(Debug, Clone)]
 pub enum Error {
 	Common,
 	Auth,
@@ -25,3 +26,5 @@ impl fmt::Display for Error {
         write!(f, "{}", description)
     }
 }
+
+impl std::error::Error for Error {}
