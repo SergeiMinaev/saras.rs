@@ -74,12 +74,24 @@ impl Storage {
 	}
 	pub async fn open(&self, path: &PathBuf) -> Result<Vec<u8>, Error> {
 		let url = get_api_url(path).await;
+
+		// Build a client with automatic decompression turned OFF so isahc
+		// does not try to handle "br" itself (it doesn't support brotli).
+		// NOTE: building a new HttpClient on every call is wasteful; consider
+		// reusing a single client instance stored on `Storage`.
+		let client = isahc::HttpClient::builder()
+			.automatic_decompression(false)
+			.build()
+			.map_err(|_| Error::Storage)?;
+
 		let req = isahc::Request::builder()
 			.method("GET")
-			.uri(url)
+			.uri(url.clone())
 			.header("X-Auth-Token", self.get_token().await)
-			.body(());
-		let mut resp = req.unwrap().send().map_err(|_| Error::Storage)?;
+			.body(())
+			.map_err(|_| Error::Storage)?;
+
+		let mut resp = client.send(req).map_err(|_| Error::Storage)?;
 		if resp.status() != StatusCode::OK {
 			return Err(Error::Storage)
 		}
@@ -87,7 +99,11 @@ impl Storage {
 		let is_br = resp.headers().get("Content-Encoding")
 			.and_then(|v| v.to_str().ok())
 			.map(|s| s.eq_ignore_ascii_case("br"))
-			.unwrap_or(false);
+			.unwrap_or(false)
+			|| path.extension()
+				.and_then(|e| e.to_str())
+				.map(|s| s.eq_ignore_ascii_case("br"))
+				.unwrap_or(false);
 		if is_br {
 			let mut out: Vec<u8> = Vec::new();
 			let mut cursor = Cursor::new(bytes);
