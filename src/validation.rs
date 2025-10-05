@@ -45,23 +45,60 @@ pub fn make_validation_error(code: &str, msg: &str) -> validator::ValidationErro
 }
 
 
-/// Takes useful info from `serde_json::Error` and returns it as `ValidationErrors`.
 pub fn parse_deser_error(e: serde_json::Error) -> ValidationErrors {
+	println!("validation error: {e}, done");
 	let mut errs = ValidationErrors::new();
 	let s = e.to_string();
-	if s.contains("missing field") {
-		// example: "missing field `age`", line: 1, column: 82
-		let _ = s.split("`").nth(0).unwrap().trim().replace(" ", "_");
-		let field = s.split("`").nth(1).unwrap_or_default();
+
+	if s.contains("missing field") && s.contains('`') {
+		let field = s.split('`').nth(1).unwrap_or_default();
 		let msg = format!("Поле `{field}` должно быть заполнено.");
 		let err = make_validation_error("missing_field", &msg);
 		errs.0.insert(field.to_string(), err);
-	} else {
-		// example: "invalid type: string \"sixteen\", expected i32", line: 1, column: 80
-		//errs.0.insert("what".to_string(), make_validation_error("lol", "wtf"));
-		let err = make_validation_error("bad_type", "Одно из полей имеет неправильный тип.");
-		errs.0.insert("__base".to_string(), err);
+		return errs;
 	}
+
+	if s.contains("required") {
+		for line in s.lines() {
+			let line = line.trim();
+			if line.is_empty() {
+				continue;
+			}
+
+			if line.contains("required") {
+				if let Some(colon_pos) = line.find(':') {
+					let mut field = line[..colon_pos].trim();
+					if field.starts_with('`') && field.ends_with('`') && field.len() > 1 {
+						field = &field[1..field.len() - 1];
+					}
+					if !field.is_empty() {
+						let msg = format!("Поле `{}` должно быть заполнено.", field);
+						let err = make_validation_error("missing_field", &msg);
+						errs.0.insert(field.to_string(), err);
+						continue;
+					}
+				}
+			}
+
+			if let Some(idx) = line.find("Validation error: required") {
+				let candidate = line[..idx].trim().trim_end_matches(':').trim();
+				if !candidate.is_empty() {
+					let field = candidate.trim_matches('`');
+					let msg = format!("Поле `{}` должно быть заполнено.", field);
+					let err = make_validation_error("missing_field", &msg);
+					errs.0.insert(field.to_string(), err);
+					continue;
+				}
+			}
+		}
+
+		if !errs.0.is_empty() {
+			return errs;
+		}
+	}
+
+	let err = make_validation_error("bad_type", "Одно из полей имеет неправильный тип.");
+	errs.0.insert("__base".to_string(), err);
 	return errs
 }
 
