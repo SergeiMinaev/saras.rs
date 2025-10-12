@@ -14,6 +14,7 @@ pub mod stream_handler;
 pub mod tpl;
 pub mod users;
 pub mod posts;
+pub mod notifications;
 pub mod util;
 pub mod validation;
 pub mod errors;
