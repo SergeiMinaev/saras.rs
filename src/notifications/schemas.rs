@@ -13,7 +13,7 @@ pub fn admin_schemas() -> Value {
 		"admin": {
 			"list_fields": ["id", "category", "action", "entity_type", "entity_id", "count", "read_at", "last_event_at"],
 			"item_fields": ["id", "recipient_id", "category", "action", "entity_type", "entity_id", "count",
-			                "last_actor_id", "payload", "created_at", "last_event_at", "read_at"],
+			                "last_actor_id", "last_actor", "payload", "created_at", "last_event_at", "read_at"],
 		},
 		"schemas": {
 			"view": notification_view_schema(),

@@ -12,7 +12,10 @@ pub struct Notification {
 	pub entity_type: String,
 	pub entity_id: String,
 	pub count: i32,
+	// keep raw id for internal use
 	pub last_actor_id: Option<u32>,
+	// human-readable actor preview joined from users_users (null when absent)
+	pub last_actor: Option<Value>,
 	pub payload: Option<Value>,
 	pub created_at: String,
 	pub last_event_at: String,
