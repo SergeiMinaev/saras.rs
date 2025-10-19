@@ -55,17 +55,41 @@ pub fn randomize_path(mut path: PathBuf) -> PathBuf {
 }
 
 pub struct Storage {
+	use_map: bool,
 }
 
 impl Storage {
 	pub fn new() -> Self {
-		Self {}
+		Self { use_map: false }
+	}
+	pub fn with_map() -> Self {
+		Self { use_map: true }
 	}
 }
 impl Storage {
+	async fn base_url_for(&self) -> String {
+		let conf = CONF.read().await;
+		let base = if self.use_map {
+			&conf.selectel.map_api_base_url
+		} else {
+			&conf.selectel.api_base_url
+		};
+		let proj_id = &conf.selectel.proj_id;
+		let container = if self.use_map {
+			&conf.selectel.map_container_name
+		} else {
+			&conf.selectel.container_name
+		};
+		format!("{base}/{proj_id}/{container}")
+	}
+
+	async fn api_url_for(&self, path: &Path) -> String {
+		format!("{}/{}", self.base_url_for().await, path.display())
+	}
+
 	pub async fn exists<P: AsRef<Path>>(&self, path: P) -> Result<bool, Error>{
 		let token = self.get_token().await;
-		let url = get_api_url(&path).await;
+		let url = self.api_url_for(path.as_ref()).await;
 		let req = isahc::Request::builder()
 			.method("GET")
 			.uri(url.clone())
@@ -80,7 +104,7 @@ impl Storage {
 		// use it directly; otherwise build the API URL based on the configured base.
 		let url = match path.to_str() {
 			Some(s) if s.starts_with("http://") || s.starts_with("https://") => s.to_string(),
-			_ => get_api_url(path).await,
+			_ => self.api_url_for(path.as_path()).await,
 		};
 
 		// Build an async client with automatic decompression turned OFF so isahc
@@ -135,7 +159,7 @@ impl Storage {
 	pub async fn ls(&self, path: &PathBuf) -> Vec<String> {
 		let url = format!(
 			"{}?delimiter=/&prefix={}/",
-			get_base_url().await, path.display()
+			self.base_url_for().await, path.display()
 		);
 		//debug!("url: {url}");
 		let mut resp = isahc::Request::builder()
@@ -161,7 +185,7 @@ impl Storage {
 	pub async fn delete<P: AsRef<Path>>(&self, path: P) -> Result<(), Error>{
 		//debug!("Storage delete path {}", path.as_ref().display());
 		let token = self.get_token().await;
-		let url = get_api_url(&path).await;
+		let url = self.api_url_for(path.as_ref()).await;
 		//debug!("Storage delete url {}", url);
 		let mut resp = isahc::Request::builder()
 			.method("DELETE")
@@ -219,7 +243,7 @@ impl Storage {
 			path = self.get_unique_path(&path).await?;
 		}
 
-		let url = get_api_url(&path).await;
+		let url = self.api_url_for(&path).await;
 		//debug!("Storage save url{}", url);
 
 		// add Content-Encoding: br when uploading pre-compressed *.br objects
