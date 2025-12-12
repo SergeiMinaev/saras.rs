@@ -25,7 +25,7 @@ pub struct User {
 	pub label: String,
 	#[schemars(title = "Email", description = "Email пользователя")]
 	pub email: String,
-	#[serde(skip_deserializing)]
+	#[serde(skip_serializing)]
 	pub hash: String,
 	pub is_superuser: bool,
 	pub avatar: Option<ImageField>,

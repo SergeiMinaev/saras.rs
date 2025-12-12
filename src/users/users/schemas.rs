@@ -13,7 +13,7 @@ pub fn admin_schemas() -> Value {
 	"meta": model_meta::<User>(),
 	"admin": {
 		"list_fields": ["id", "email", "name", "avatar", "is_superuser"],
-		"item_fields": ["id", "email", "name", "avatar", "is_superuser", "hash"],
+		"item_fields": ["id", "email", "name", "avatar", "is_superuser"],
 	},
 	"schemas": {
 		"view": user_view_schema(),
