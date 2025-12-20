@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 use chrono::{Duration};
+use hmac::{Hmac, Mac};
 use isahc::http::status::StatusCode;
 use isahc::prelude::*;
 use isahc::Body;
@@ -16,6 +17,10 @@ use crate::memstore::MEMSTORE;
 //use crate::storage::msgs;
 use crate::util::slugify;
 use futures_lite::io::AsyncReadExt;
+use sha2::{Digest, Sha256};
+use url::Url;
+use url::form_urlencoded::byte_serialize;
+use base64::Engine;
 
 
 const TOKEN_KEY: &str = "storage_token";
@@ -56,6 +61,24 @@ pub fn randomize_path(mut path: PathBuf) -> PathBuf {
 
 pub struct Storage {
 	use_map: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct ContainerCors {
+	pub allow_origin: String,
+	pub allow_methods: String,
+	pub allow_headers: String,
+	pub expose_headers: String,
+	pub max_age: u32,
+}
+
+#[derive(Debug, Clone)]
+pub struct ContainerCorsState {
+	pub allow_origin: Option<String>,
+	pub allow_methods: Option<String>,
+	pub allow_headers: Option<String>,
+	pub expose_headers: Option<String>,
+	pub max_age: Option<u32>,
 }
 
 impl Storage {
@@ -335,4 +358,496 @@ impl Storage {
 		}
 		Ok(new_path.into())
 	}
+
+	pub async fn set_container_cors(&self, cors: &ContainerCors) -> Result<(), String> {
+		let conf = CONF.read().await;
+		let bucket = if self.use_map {
+			conf.selectel.map_container_name.trim().to_string()
+		} else {
+			conf.selectel.container_name.trim().to_string()
+		};
+		let access_key = conf
+			.selectel
+			.s3_access_key_id
+			.clone()
+			.map(|s| s.trim().to_string())
+			.filter(|v| !v.is_empty())
+			.ok_or_else(|| "[saras] missing selectel.s3_access_key_id".to_string())?;
+		let secret_key = conf
+			.selectel
+			.s3_secret_access_key
+			.clone()
+			.map(|s| s.trim().to_string())
+			.filter(|v| !v.is_empty())
+			.ok_or_else(|| "[saras] missing selectel.s3_secret_access_key".to_string())?;
+		let api_base = if self.use_map {
+			conf.selectel.map_api_base_url.trim().to_string()
+		} else {
+			conf.selectel.api_base_url.trim().to_string()
+		};
+		let (s3_base_host, region) = s3_host_and_region_from_swift(&api_base)?;
+		drop(conf);
+
+		let host = s3_base_host.clone();
+		let url = format!("https://{host}/{bucket}?cors=");
+		let xml = s3_cors_xml(cors)?;
+		let content_md5 = md5_base64(xml.as_bytes());
+
+		let payload_hash = sha256_hex(xml.as_bytes());
+		let (amz_date, authorization) = s3_sign_headers(
+			"PUT",
+			&format!("/{bucket}"),
+			"cors=",
+			&host,
+			&payload_hash,
+			Some(&content_md5),
+			&access_key,
+			&secret_key,
+			&region,
+		)?;
+
+		let req = isahc::Request::builder()
+			.method("PUT")
+			.uri(url)
+			.header("Host", host)
+			.header("x-amz-date", amz_date)
+			.header("x-amz-content-sha256", payload_hash)
+			.header("Content-MD5", content_md5)
+			.header("Authorization", authorization)
+			.header("Content-Type", "application/xml")
+			.body(AsyncBody::from(xml))
+			.map_err(|e| format!("[saras] s3 cors PUT build error: {e}"))?;
+
+		let mut resp = req
+			.send_async()
+			.await
+			.map_err(|e| format!("[saras] s3 cors PUT send error: {e}"))?;
+
+		let status = resp.status();
+		if status == StatusCode::OK {
+			return Ok(());
+		}
+
+		let mut body = resp.into_body();
+		let mut bytes: Vec<u8> = Vec::new();
+		body.read_to_end(&mut bytes)
+			.await
+			.map_err(|e| format!("[saras] s3 cors error read body: {e}"))?;
+		let text = String::from_utf8_lossy(&bytes);
+
+		Err(format!(
+			"[saras] s3 cors set failed: http {} {}",
+			status, text
+		))
+	}
+
+	pub async fn get_container_cors(&self) -> Result<ContainerCorsState, String> {
+		let conf = CONF.read().await;
+		let bucket = if self.use_map {
+			conf.selectel.map_container_name.trim().to_string()
+		} else {
+			conf.selectel.container_name.trim().to_string()
+		};
+		let access_key = conf
+			.selectel
+			.s3_access_key_id
+			.clone()
+			.map(|s| s.trim().to_string())
+			.filter(|v| !v.is_empty())
+			.ok_or_else(|| "[saras] missing selectel.s3_access_key_id".to_string())?;
+		let secret_key = conf
+			.selectel
+			.s3_secret_access_key
+			.clone()
+			.map(|s| s.trim().to_string())
+			.filter(|v| !v.is_empty())
+			.ok_or_else(|| "[saras] missing selectel.s3_secret_access_key".to_string())?;
+		let api_base = if self.use_map {
+			conf.selectel.map_api_base_url.trim().to_string()
+		} else {
+			conf.selectel.api_base_url.trim().to_string()
+		};
+		let (s3_base_host, region) = s3_host_and_region_from_swift(&api_base)?;
+		drop(conf);
+
+		let host = s3_base_host.clone();
+		let url = format!("https://{host}/{bucket}?cors=");
+
+		let payload_hash = sha256_hex(b"");
+		let (amz_date, authorization) = s3_sign_headers(
+			"GET",
+			&format!("/{bucket}"),
+			"cors=",
+			&host,
+			&payload_hash,
+			None,
+			&access_key,
+			&secret_key,
+			&region,
+		)?;
+
+		let req = isahc::Request::builder()
+			.method("GET")
+			.uri(url)
+			.header("Host", host)
+			.header("x-amz-date", amz_date)
+			.header("x-amz-content-sha256", payload_hash)
+			.header("Authorization", authorization)
+			.body(())
+			.map_err(|e| format!("[saras] s3 cors GET build error: {e}"))?;
+
+		let mut resp = req
+			.send_async()
+			.await
+			.map_err(|e| format!("[saras] s3 cors GET send error: {e}"))?;
+
+		if resp.status() != StatusCode::OK {
+			let status = resp.status();
+			let mut body = resp.into_body();
+			let mut bytes: Vec<u8> = Vec::new();
+			body.read_to_end(&mut bytes)
+				.await
+				.map_err(|e| format!("[saras] s3 cors error read body: {e}"))?;
+			let text = String::from_utf8_lossy(&bytes);
+			return Err(format!("[saras] s3 cors GET failed: http {} {}", status, text));
+		}
+
+		let mut body = resp.into_body();
+		let mut bytes: Vec<u8> = Vec::new();
+		body.read_to_end(&mut bytes)
+			.await
+			.map_err(|e| format!("[saras] s3 cors read error: {e}"))?;
+		let xml = String::from_utf8(bytes).map_err(|e| format!("[saras] s3 cors utf8 error: {e}"))?;
+
+		s3_parse_cors_xml(&xml)
+	}
+
+	pub async fn presign_put_url(
+		&self,
+		path: &Path,
+		expires_sec: u32,
+		content_type: Option<&str>,
+	) -> Result<String, String> {
+		let conf = CONF.read().await;
+		let bucket = if self.use_map {
+			conf.selectel.map_container_name.trim().to_string()
+		} else {
+			conf.selectel.container_name.trim().to_string()
+		};
+		let access_key = conf
+			.selectel
+			.s3_access_key_id
+			.clone()
+			.map(|s| s.trim().to_string())
+			.filter(|v| !v.is_empty())
+			.ok_or_else(|| "[saras] missing selectel.s3_access_key_id".to_string())?;
+		let secret_key = conf
+			.selectel
+			.s3_secret_access_key
+			.clone()
+			.map(|s| s.trim().to_string())
+			.filter(|v| !v.is_empty())
+			.ok_or_else(|| "[saras] missing selectel.s3_secret_access_key".to_string())?;
+		let api_base = if self.use_map {
+			conf.selectel.map_api_base_url.trim().to_string()
+		} else {
+			conf.selectel.api_base_url.trim().to_string()
+		};
+		let (s3_base_host, region) = s3_host_and_region_from_swift(&api_base)?;
+		drop(conf);
+
+		let host = format!("{bucket}.{s3_base_host}");
+		let key = path.to_string_lossy();
+		let encoded_key = s3_uri_encode_path(&key);
+		let uri = format!("/{encoded_key}");
+
+		Ok(s3_presign_put(
+			&host,
+			&uri,
+			expires_sec,
+			content_type,
+			&access_key,
+			&secret_key,
+			&region,
+		)?)
+	}
+}
+
+type HmacSha256 = Hmac<Sha256>;
+
+fn hex_lower(bytes: &[u8]) -> String {
+	let mut out = String::with_capacity(bytes.len() * 2);
+	for b in bytes {
+		out.push_str(&format!("{:02x}", b));
+	}
+	out
+}
+
+fn hmac_sha256(key: &[u8], data: &[u8]) -> Vec<u8> {
+	let mut mac = HmacSha256::new_from_slice(key).expect("HMAC can take key of any size");
+	mac.update(data);
+	mac.finalize().into_bytes().to_vec()
+}
+
+fn sha256_hex(data: &[u8]) -> String {
+	let mut hasher = Sha256::new();
+	hasher.update(data);
+	hex_lower(&hasher.finalize())
+}
+
+fn s3_host_and_region_from_swift(api_base_url: &str) -> Result<(String, String), String> {
+	let u = Url::parse(api_base_url).map_err(|e| format!("[saras] bad api_base_url: {e}"))?;
+	let host = u
+		.host_str()
+		.ok_or_else(|| "[saras] api_base_url missing host".to_string())?
+		.to_string();
+	let s3_host = if let Some(rest) = host.strip_prefix("swift.") {
+		format!("s3.{rest}")
+	} else if host.starts_with("s3.") {
+		host.clone()
+	} else {
+		return Err(format!(
+			"[saras] api_base_url host must start with swift. or s3., got: {host}"
+		));
+	};
+	let parts: Vec<&str> = s3_host.split('.').collect();
+	if parts.len() < 2 {
+		return Err(format!("[saras] bad s3 host: {s3_host}"));
+	}
+	let region = parts[1].to_string();
+	Ok((s3_host, region))
+}
+
+fn s3_uri_encode_path(path: &str) -> String {
+	path.split('/')
+		.map(|seg| byte_serialize(seg.as_bytes()).collect::<String>())
+		.collect::<Vec<_>>()
+		.join("/")
+}
+
+fn s3_query_encode(s: &str) -> String {
+	byte_serialize(s.as_bytes()).collect::<String>()
+}
+
+fn s3_cors_xml(cors: &ContainerCors) -> Result<String, String> {
+	let allow_origins = cors
+		.allow_origin
+		.split(',')
+		.map(|s| s.trim())
+		.filter(|s| !s.is_empty())
+		.collect::<Vec<_>>();
+	if allow_origins.is_empty() {
+		return Err("[saras] cors.allow_origin is empty".to_string());
+	}
+	let allow_methods = cors
+		.allow_methods
+		.split(',')
+		.map(|s| s.trim().to_uppercase())
+		.filter(|s| !s.is_empty())
+		.collect::<Vec<_>>();
+	if allow_methods.is_empty() {
+		return Err("[saras] cors.allow_methods is empty".to_string());
+	}
+	for m in &allow_methods {
+		match m.as_str() {
+			"GET" | "PUT" | "POST" | "DELETE" | "HEAD" => {}
+			_ => {
+				return Err(format!(
+					"[saras] invalid CORS method for S3: {m} (allowed: GET,PUT,POST,DELETE,HEAD)"
+				))
+			}
+		}
+	}
+	let allow_headers = cors
+		.allow_headers
+		.split(',')
+		.map(|s| s.trim())
+		.filter(|s| !s.is_empty())
+		.collect::<Vec<_>>();
+	let expose_headers = cors
+		.expose_headers
+		.split(',')
+		.map(|s| s.trim())
+		.filter(|s| !s.is_empty())
+		.collect::<Vec<_>>();
+
+	let mut xml = String::new();
+	xml.push_str(r#"<CORSConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/">"#);
+	xml.push_str("<CORSRule>");
+	for o in allow_origins {
+		xml.push_str("<AllowedOrigin>");
+		xml.push_str(o);
+		xml.push_str("</AllowedOrigin>");
+	}
+	for m in allow_methods {
+		xml.push_str("<AllowedMethod>");
+		xml.push_str(&m);
+		xml.push_str("</AllowedMethod>");
+	}
+	for h in allow_headers {
+		xml.push_str("<AllowedHeader>");
+		xml.push_str(h);
+		xml.push_str("</AllowedHeader>");
+	}
+	for h in expose_headers {
+		xml.push_str("<ExposeHeader>");
+		xml.push_str(h);
+		xml.push_str("</ExposeHeader>");
+	}
+	xml.push_str("<MaxAgeSeconds>");
+	xml.push_str(&cors.max_age.to_string());
+	xml.push_str("</MaxAgeSeconds>");
+	xml.push_str("</CORSRule>");
+	xml.push_str("</CORSConfiguration>");
+	Ok(xml)
+}
+
+fn s3_signing_key(secret_key: &str, date_stamp: &str, region: &str) -> Vec<u8> {
+	let k_date = hmac_sha256(format!("AWS4{secret_key}").as_bytes(), date_stamp.as_bytes());
+	let k_region = hmac_sha256(&k_date, region.as_bytes());
+	let k_service = hmac_sha256(&k_region, b"s3");
+	hmac_sha256(&k_service, b"aws4_request")
+}
+
+fn s3_sign_headers(
+	method: &str,
+	uri: &str,
+	canonical_query: &str,
+	host: &str,
+	payload_hash: &str,
+	content_md5: Option<&str>,
+	access_key: &str,
+	secret_key: &str,
+	region: &str,
+) -> Result<(String, String), String> {
+	let now = chrono::Utc::now();
+	let amz_date = now.format("%Y%m%dT%H%M%SZ").to_string();
+	let date_stamp = now.format("%Y%m%d").to_string();
+	let (canonical_headers, signed_headers) = if let Some(md5) = content_md5 {
+		(
+			format!(
+				"content-md5:{md5}\n\
+host:{host}\n\
+x-amz-content-sha256:{payload_hash}\n\
+x-amz-date:{amz_date}\n"
+			),
+			"content-md5;host;x-amz-content-sha256;x-amz-date",
+		)
+	} else {
+		(
+			format!(
+				"host:{host}\n\
+x-amz-content-sha256:{payload_hash}\n\
+x-amz-date:{amz_date}\n"
+			),
+			"host;x-amz-content-sha256;x-amz-date",
+		)
+	};
+	let canonical_request = format!(
+		"{method}\n{uri}\n{canonical_query}\n{canonical_headers}\n{signed_headers}\n{payload_hash}"
+	);
+	let scope = format!("{date_stamp}/{region}/s3/aws4_request");
+	let string_to_sign = format!(
+		"AWS4-HMAC-SHA256\n{amz_date}\n{scope}\n{}",
+		sha256_hex(canonical_request.as_bytes())
+	);
+	let signing_key = s3_signing_key(secret_key, &date_stamp, region);
+	let sig = hmac_sha256(&signing_key, string_to_sign.as_bytes());
+	let signature = hex_lower(&sig);
+	let authorization = format!(
+		"AWS4-HMAC-SHA256 Credential={access_key}/{scope}, SignedHeaders={signed_headers}, Signature={signature}"
+	);
+	Ok((amz_date, authorization))
+}
+
+fn s3_presign_put(
+	host: &str,
+	uri: &str,
+	expires_sec: u32,
+	_content_type: Option<&str>,
+	access_key: &str,
+	secret_key: &str,
+	region: &str,
+) -> Result<String, String> {
+	let now = chrono::Utc::now();
+	let amz_date = now.format("%Y%m%dT%H%M%SZ").to_string();
+	let date_stamp = now.format("%Y%m%d").to_string();
+	let scope = format!("{date_stamp}/{region}/s3/aws4_request");
+
+	let mut params: Vec<(String, String)> = Vec::new();
+	params.push(("X-Amz-Algorithm".to_string(), "AWS4-HMAC-SHA256".to_string()));
+	params.push(("X-Amz-Credential".to_string(), format!("{access_key}/{scope}")));
+	params.push(("X-Amz-Date".to_string(), amz_date.clone()));
+	params.push(("X-Amz-Expires".to_string(), expires_sec.to_string()));
+	params.push(("X-Amz-SignedHeaders".to_string(), "host".to_string()));
+
+	params.sort_by(|a, b| a.0.cmp(&b.0));
+	let canonical_query = params
+		.iter()
+		.map(|(k, v)| format!("{}={}", s3_query_encode(k), s3_query_encode(v)))
+		.collect::<Vec<_>>()
+		.join("&");
+
+	let canonical_headers = format!("host:{host}\n");
+	let signed_headers = "host";
+	let payload_hash = "UNSIGNED-PAYLOAD";
+	let canonical_request = format!(
+		"PUT\n{uri}\n{canonical_query}\n{canonical_headers}\n{signed_headers}\n{payload_hash}"
+	);
+	let string_to_sign = format!(
+		"AWS4-HMAC-SHA256\n{amz_date}\n{scope}\n{}",
+		sha256_hex(canonical_request.as_bytes())
+	);
+	let signing_key = s3_signing_key(secret_key, &date_stamp, region);
+	let sig = hmac_sha256(&signing_key, string_to_sign.as_bytes());
+	let signature = hex_lower(&sig);
+
+	Ok(format!(
+		"https://{host}{uri}?{canonical_query}&X-Amz-Signature={signature}"
+	))
+}
+
+fn s3_parse_cors_xml(xml: &str) -> Result<ContainerCorsState, String> {
+	let find_first = |tag: &str| -> Option<String> {
+		let start = format!("<{tag}>");
+		let end = format!("</{tag}>");
+		let i = xml.find(&start)?;
+		let j = xml[i + start.len()..].find(&end)?;
+		Some(xml[i + start.len()..i + start.len() + j].to_string())
+	};
+	let allow_origin = find_first("AllowedOrigin");
+
+	let mut methods: Vec<String> = Vec::new();
+	let mut rest = xml;
+	let start = "<AllowedMethod>";
+	let end = "</AllowedMethod>";
+	while let Some(i) = rest.find(start) {
+		let after = &rest[i + start.len()..];
+		let Some(j) = after.find(end) else { break; };
+		methods.push(after[..j].to_string());
+		rest = &after[j + end.len()..];
+	}
+
+	let allow_methods = if methods.is_empty() {
+		None
+	} else {
+		Some(methods.join(","))
+	};
+
+	let allow_headers = find_first("AllowedHeader");
+	let expose_headers = find_first("ExposeHeader");
+	let max_age = find_first("MaxAgeSeconds").and_then(|s| s.parse::<u32>().ok());
+
+	Ok(ContainerCorsState {
+		allow_origin,
+		allow_methods,
+		allow_headers,
+		expose_headers,
+		max_age,
+	})
+}
+
+fn md5_base64(data: &[u8]) -> String {
+	let digest = md5::compute(data);
+	base64::engine::general_purpose::STANDARD.encode(digest.0)
 }

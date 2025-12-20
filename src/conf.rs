@@ -26,6 +26,8 @@ pub struct SelectelConf {
 	pub container_hostname: String,
 	pub svc_user_name: String,
 	pub svc_user_pwd: String,
+	pub s3_access_key_id: Option<String>,
+	pub s3_secret_access_key: Option<String>,
 	pub token_lifetime_sec: i64,
 	pub api_base_url: String,
 	pub map_api_base_url: String,
