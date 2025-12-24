@@ -5,6 +5,7 @@ use crate::users::avatars::service::{update_avatar,delete_avatar};
 use crate::users::users::forms::UserForm;
 use crate::errors::Error;
 use crate::db::get_pool;
+use crate::validation::validate_pwd;
 
 
 pub async fn create_user(user_form: UserForm) -> Result<User, Error> {
@@ -47,6 +48,19 @@ pub async fn delete_user(id: i32) -> Result<(), Error> {
 	let pool = get_pool();
 	let userdb = UserDb::new(pool.clone());
 	if userdb.delete(id).await == true {
+		Ok(())
+	} else {
+		Err(Error::Database)
+	}
+}
+
+pub async fn set_password(id: i32, pwd: &str) -> Result<(), Error> {
+	if let Err(_e) = validate_pwd(pwd) {
+		return Err(Error::Validation);
+	}
+	let pool = get_pool();
+	let userdb = UserDb::new(pool.clone());
+	if userdb.set_password(id, pwd).await {
 		Ok(())
 	} else {
 		Err(Error::Database)

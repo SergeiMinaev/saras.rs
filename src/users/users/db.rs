@@ -10,6 +10,7 @@ use argon2::{
 };
 use lpsql::pool::ConnectionPool;
 use crate::util::random_string;
+use crate::auth::auth::hashing;
 use std::sync::Arc;
 
 
@@ -126,6 +127,11 @@ impl UserDb {
 		Lpsql::query(q).bind(id).bind(data.email).bind(data.is_superuser.unwrap())
 			.fetch_one(&self.pool).await
 			.map(|id| id.parse().unwrap())
+	}
+	pub async fn set_password(&self, id: i32, pwd: &str) -> bool {
+		let hash = hashing::hash_pwd(pwd);
+		let q = "update users_users set hash = $2::TEXT where id = $1::INT returning id";
+		Lpsql::query(q).bind(id).bind(hash).fetch_one(&self.pool).await.is_some()
 	}
 	pub async fn update_and_get(&self, id: i32, data: UserForm) -> Option<User> {
 		let id = self.update(id, data).await?;
