@@ -6,7 +6,9 @@ use isahc::prelude::*;
 use isahc::Body;
 use isahc::AsyncBody;
 use std::io::Cursor;
+use std::io::Read;
 use brotli::Decompressor;
+use async_std::task;
 //use log::debug;
 use serde_json::json;
 use rand::{thread_rng, Rng};
@@ -230,6 +232,15 @@ impl Storage {
 		let is_force_overwrite = false;
 		self._save(data, path, is_fixed_path, is_force_overwrite, false).await
 	}
+	pub async fn save_stream<R>(&self, reader: R, path: &PathBuf) -> Result<PathBuf, Error>
+	where
+		R: Read + Send + Sync + 'static,
+	{
+		let is_fixed_path = false;
+		let is_force_overwrite = false;
+		self._save_stream(reader, path, is_fixed_path, is_force_overwrite, false)
+			.await
+	}
 
 	/// Save brotli-compressed `data` making sure the object is uploaded
 	/// with the `Content-Encoding: br` header.
@@ -241,6 +252,16 @@ impl Storage {
 		let is_fixed_path = false;
 		let is_force_overwrite = false;
 		self._save(compressed, path, is_fixed_path, is_force_overwrite, true).await
+	}
+	pub async fn save_stream_fixed<R>(&self, reader: R, path: &PathBuf) -> Result<(), Error>
+	where
+		R: Read + Send + Sync + 'static,
+	{
+		let is_fixed_path = true;
+		let is_force_overwrite = false;
+		self._save_stream(reader, path, is_fixed_path, is_force_overwrite, false)
+			.await
+			.map(|_| ())
 	}
 	pub async fn save_fixed(&self, data: Vec<u8>, path: &PathBuf) -> Result<(), Error> {
 		let is_fixed_path = true;
@@ -293,6 +314,59 @@ impl Storage {
 			//debug!("API resp: {resp:?}");
 			return Err(Error::Storage)
 		}
+		Ok(path)
+	}
+	pub async fn _save_stream<R>(
+		&self,
+		reader: R,
+		path: &PathBuf,
+		fixed_path: bool,
+		is_force_overwrite: bool,
+		is_br: bool,
+	) -> Result<PathBuf, Error>
+	where
+		R: Read + Send + Sync + 'static,
+	{
+		let mut path = path.clone();
+		if fixed_path {
+			if self.exists(&path).await? {
+				if !is_force_overwrite {
+					return Err(Error::Common)
+				}
+			}
+		} else {
+			path = self.get_unique_path(&path).await?;
+		}
+
+		let url = self.api_url_for(&path).await;
+		let token = self.get_token().await;
+		let is_br = is_br
+			|| path
+				.extension()
+				.and_then(|e| e.to_str())
+				.map(|s| s.eq_ignore_ascii_case("br"))
+				.unwrap_or(false);
+
+		let res: Result<(), Error> = task::spawn_blocking(move || {
+			let mut req_builder = isahc::Request::builder()
+				.method("PUT")
+				.uri(url)
+				.header("X-Auth-Token", token);
+			if is_br {
+				req_builder = req_builder.header("Content-Encoding", "br");
+			}
+			let req = req_builder
+				.body(Body::from_reader(reader))
+				.map_err(|_| Error::Storage)?;
+			let mut resp = req.send().map_err(|_| Error::Storage)?;
+			if resp.status() != StatusCode::CREATED {
+				return Err(Error::Storage);
+			}
+			Ok(())
+		})
+		.await;
+
+		res?;
 		Ok(path)
 	}
 	pub async fn get_token(&self) -> String {

@@ -68,3 +68,25 @@ pub async fn save_uuid_named_br(
 	// `save_br` takes care of compression and path uniqueness internally.
 	storage.save_br(data, &candidate).await
 }
+
+/// Save stream data into the cloud storage under `dir/UUID.ext`.
+/// Uses streaming upload without brotli compression.
+pub async fn save_uuid_named_stream<R>(
+	storage: &Storage,
+	reader: R,
+	dir: &str,
+	ext: &str,
+) -> Result<PathBuf, Error>
+where
+	R: Read + Send + Sync + 'static,
+{
+	let file_name = if ext.is_empty() {
+		Uuid::new_v4().to_string()
+	} else {
+		format!("{}.{}", Uuid::new_v4(), ext)
+	};
+	let candidate = PathBuf::from(dir).join(file_name);
+	let unique = storage.get_unique_path(&candidate).await?;
+	storage.save_stream_fixed(reader, &unique).await?;
+	Ok(unique)
+}
