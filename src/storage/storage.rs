@@ -7,6 +7,8 @@ use isahc::Body;
 use isahc::AsyncBody;
 use std::io::Cursor;
 use std::io::Read;
+use std::io::Write;
+use std::time::{Duration as StdDuration, Instant};
 use brotli::Decompressor;
 use async_std::task;
 //use log::debug;
@@ -26,6 +28,9 @@ use base64::Engine;
 
 
 const TOKEN_KEY: &str = "storage_token";
+const STREAM_PROGRESS_STEP_BYTES: u64 = 100 * 1024 * 1024;
+const STREAM_PROGRESS_FIRST_BYTES: u64 = 1 * 1024 * 1024;
+const STREAM_PROGRESS_TIME_SECS: u64 = 5;
 
 
 pub async fn get_base_url() -> String {
@@ -232,13 +237,18 @@ impl Storage {
 		let is_force_overwrite = false;
 		self._save(data, path, is_fixed_path, is_force_overwrite, false).await
 	}
-	pub async fn save_stream<R>(&self, reader: R, path: &PathBuf) -> Result<PathBuf, Error>
+	pub async fn save_stream<R>(
+		&self,
+		reader: R,
+		size_bytes: u64,
+		path: &PathBuf,
+	) -> Result<PathBuf, Error>
 	where
 		R: Read + Send + Sync + 'static,
 	{
 		let is_fixed_path = false;
 		let is_force_overwrite = false;
-		self._save_stream(reader, path, is_fixed_path, is_force_overwrite, false)
+		self._save_stream(reader, size_bytes, path, is_fixed_path, is_force_overwrite, false)
 			.await
 	}
 
@@ -253,13 +263,18 @@ impl Storage {
 		let is_force_overwrite = false;
 		self._save(compressed, path, is_fixed_path, is_force_overwrite, true).await
 	}
-	pub async fn save_stream_fixed<R>(&self, reader: R, path: &PathBuf) -> Result<(), Error>
+	pub async fn save_stream_fixed<R>(
+		&self,
+		reader: R,
+		size_bytes: u64,
+		path: &PathBuf,
+	) -> Result<(), Error>
 	where
 		R: Read + Send + Sync + 'static,
 	{
 		let is_fixed_path = true;
 		let is_force_overwrite = false;
-		self._save_stream(reader, path, is_fixed_path, is_force_overwrite, false)
+		self._save_stream(reader, size_bytes, path, is_fixed_path, is_force_overwrite, false)
 			.await
 			.map(|_| ())
 	}
@@ -319,6 +334,7 @@ impl Storage {
 	pub async fn _save_stream<R>(
 		&self,
 		reader: R,
+		size_bytes: u64,
 		path: &PathBuf,
 		fixed_path: bool,
 		is_force_overwrite: bool,
@@ -347,7 +363,16 @@ impl Storage {
 				.map(|s| s.eq_ignore_ascii_case("br"))
 				.unwrap_or(false);
 
+		let log_path = path.clone();
 		let res: Result<(), Error> = task::spawn_blocking(move || {
+			let path_str = log_path.display().to_string();
+			println!(
+				"[saras][storage] save_stream start path={} fixed={} force_overwrite={} br={}",
+				log_path.display(),
+				fixed_path,
+				is_force_overwrite,
+				is_br
+			);
 			let mut req_builder = isahc::Request::builder()
 				.method("PUT")
 				.uri(url)
@@ -355,13 +380,32 @@ impl Storage {
 			if is_br {
 				req_builder = req_builder.header("Content-Encoding", "br");
 			}
+			let progress_reader = ProgressReader::new(
+				reader,
+				path_str,
+				size_bytes,
+				STREAM_PROGRESS_STEP_BYTES,
+			);
 			let req = req_builder
-				.body(Body::from_reader(reader))
+				.body(Body::from_reader_sized(progress_reader, size_bytes))
 				.map_err(|_| Error::Storage)?;
 			let mut resp = req.send().map_err(|_| Error::Storage)?;
 			if resp.status() != StatusCode::CREATED {
+				let status = resp.status();
+				let body = resp.text().unwrap_or_else(|_| "<unreadable>".to_string());
+				println!(
+					"[saras][storage] save_stream failed path={} status={} body={}",
+					log_path.display(),
+					status,
+					body
+				);
 				return Err(Error::Storage);
 			}
+			println!(
+				"[saras][storage] save_stream done path={} status={}",
+				log_path.display(),
+				resp.status()
+			);
 			Ok(())
 		})
 		.await;
@@ -644,6 +688,73 @@ impl Storage {
 			&secret_key,
 			&region,
 		)?)
+	}
+}
+
+struct ProgressReader<R> {
+	inner: R,
+	path: String,
+	size_bytes: u64,
+	next_log: u64,
+	step_bytes: u64,
+	read_bytes: u64,
+	next_time_log: Instant,
+	time_step: StdDuration,
+}
+
+impl<R> ProgressReader<R> {
+	fn new(inner: R, path: String, size_bytes: u64, step_bytes: u64) -> Self {
+		let step_bytes = step_bytes.max(1);
+		let first_log = STREAM_PROGRESS_FIRST_BYTES.min(step_bytes);
+		let time_step = StdDuration::from_secs(STREAM_PROGRESS_TIME_SECS.max(1));
+		Self {
+			inner,
+			path,
+			size_bytes,
+			next_log: first_log,
+			step_bytes,
+			read_bytes: 0,
+			next_time_log: Instant::now() + time_step,
+			time_step,
+		}
+	}
+}
+
+impl<R: Read> Read for ProgressReader<R> {
+	fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+		let n = self.inner.read(buf)?;
+		if n == 0 {
+			return Ok(0);
+		}
+		self.read_bytes = self.read_bytes.saturating_add(n as u64);
+		let now = Instant::now();
+		let mut logged = false;
+		while self.read_bytes >= self.next_log {
+			println!(
+				"[saras][storage] save_stream progress path={} bytes={}/{}",
+				self.path,
+				self.read_bytes,
+				self.size_bytes
+			);
+			let _ = std::io::stdout().flush();
+			logged = true;
+			if self.next_log < self.step_bytes {
+				self.next_log = self.step_bytes;
+			} else {
+				self.next_log = self.next_log.saturating_add(self.step_bytes);
+			}
+		}
+		if !logged && now >= self.next_time_log {
+			println!(
+				"[saras][storage] save_stream progress path={} bytes={}/{}",
+				self.path,
+				self.read_bytes,
+				self.size_bytes
+			);
+			let _ = std::io::stdout().flush();
+			self.next_time_log = now + self.time_step;
+		}
+		Ok(n)
 	}
 }
 

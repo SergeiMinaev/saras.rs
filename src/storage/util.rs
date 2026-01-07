@@ -74,6 +74,7 @@ pub async fn save_uuid_named_br(
 pub async fn save_uuid_named_stream<R>(
 	storage: &Storage,
 	reader: R,
+	size_bytes: u64,
 	dir: &str,
 	ext: &str,
 ) -> Result<PathBuf, Error>
@@ -87,6 +88,6 @@ where
 	};
 	let candidate = PathBuf::from(dir).join(file_name);
 	let unique = storage.get_unique_path(&candidate).await?;
-	storage.save_stream_fixed(reader, &unique).await?;
+	storage.save_stream_fixed(reader, size_bytes, &unique).await?;
 	Ok(unique)
 }
