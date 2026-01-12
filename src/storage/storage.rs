@@ -121,12 +121,19 @@ impl Storage {
 		let token = self.get_token().await;
 		let url = self.api_url_for(path.as_ref()).await;
 		let req = isahc::Request::builder()
-			.method("GET")
+			.method("HEAD")
 			.uri(url.clone())
 			.header("X-Auth-Token", token)
 			.body(())
 			.map_err(|_| Error::Storage)?;
-		let mut resp = req.send_async().await.map_err(|_| Error::Storage)?;
+		let mut resp = req.send_async().await.map_err(|e| {
+			eprintln!(
+				"[saras][storage] exists failed path={} err={:?}",
+				path.as_ref().display(),
+				e
+			);
+			Error::Storage
+		})?;
 		Ok(resp.status() == StatusCode::OK)
 	}
 	pub async fn open(&self, path: &PathBuf) -> Result<Vec<u8>, Error> {
@@ -324,10 +331,22 @@ impl Storage {
 		let req = req_builder
 			.body(AsyncBody::from(data))
 			.map_err(|_| Error::Storage)?;
-		let mut resp = req.send_async().await.map_err(|_| Error::Storage)?;
+		let mut resp = req.send_async().await.map_err(|e| {
+			eprintln!(
+				"[saras][storage] save failed path={} err={:?}",
+				path.display(),
+				e
+			);
+			Error::Storage
+		})?;
 		if resp.status() != StatusCode::CREATED {
-			//debug!("API resp: {resp:?}");
-			return Err(Error::Storage)
+			eprintln!(
+				"[saras][storage] save failed path={} status={} headers={:?}",
+				path.display(),
+				resp.status(),
+				resp.headers()
+			);
+			return Err(Error::Storage);
 		}
 		Ok(path)
 	}
@@ -389,7 +408,14 @@ impl Storage {
 			let req = req_builder
 				.body(Body::from_reader_sized(progress_reader, size_bytes))
 				.map_err(|_| Error::Storage)?;
-			let mut resp = req.send().map_err(|_| Error::Storage)?;
+			let mut resp = req.send().map_err(|e| {
+				println!(
+					"[saras][storage] save_stream failed path={} err={:?}",
+					log_path.display(),
+					e
+				);
+				Error::Storage
+			})?;
 			if resp.status() != StatusCode::CREATED {
 				let status = resp.status();
 				let body = resp.text().unwrap_or_else(|_| "<unreadable>".to_string());
