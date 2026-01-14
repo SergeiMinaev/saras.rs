@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use serde::Deserialize;
 use validator::{ Validate };
 use crate::http::{ Request };
-use crate::validation::{ ValidationErrors, parse_deser_error };
+use crate::validation::{ ValidationErrors, parse_json_validation };
 
 
 
@@ -18,14 +18,10 @@ pub struct ImageFieldForm {
 
 impl ImageFieldForm {
 	pub fn validate(req: &Request) -> Result<ImageFieldForm, ValidationErrors> {
-		match serde_json::from_str::<ImageFieldForm>(&req.body_string) {
-			Err(e) => return Err(parse_deser_error(e)),
-			Ok(avatar_form) => {
-				match avatar_form.validate() {
-					Err(e) => Err(e.into()),
-					Ok(()) => Ok(avatar_form.clone())
-				}
-			}
+		let avatar_form: ImageFieldForm = parse_json_validation(&req.body_string)?;
+		match avatar_form.validate() {
+			Err(e) => Err(e.into()),
+			Ok(()) => Ok(avatar_form.clone()),
 		}
 	}
 }

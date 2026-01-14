@@ -1,8 +1,7 @@
 use serde::Deserialize;
-use serde_json;
 use validator::{ Validate };
 use crate::http::{ Request };
-use crate::validation::{ ValidationErrors, parse_deser_error };
+use crate::validation::{ ValidationErrors, parse_json_validation };
 
 
 
@@ -13,14 +12,10 @@ pub struct AuthVkForm {
 
 impl AuthVkForm {
 	pub fn validate(req: &Request) -> Result<AuthVkForm, ValidationErrors> {
-		match serde_json::from_str::<AuthVkForm>(&req.body_string) {
-			Err(e) => return Err(parse_deser_error(e)),
-			Ok(form) => {
-				match form.validate() {
-					Err(e) => Err(e.into()),
-					Ok(()) => Ok(form.clone())
-				}
-			}
+		let form: AuthVkForm = parse_json_validation(&req.body_string)?;
+		match form.validate() {
+			Err(e) => Err(e.into()),
+			Ok(()) => Ok(form.clone()),
 		}
 	}
 }

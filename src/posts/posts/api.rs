@@ -77,7 +77,8 @@ pub async fn create_post(req: Request) -> Resp {
 
 pub async fn update_post(req: Request) -> Resp {
 	match UpdatePostForm::validate(&req) {
-        Err(_) => JsonResp::err("Не удалось изменить пост.", &Error::Validation).to_http(),
+        Err(e) => JsonResp::err("Не удалось изменить пост.", &Error::Validation)
+			.content(&e).to_http(),
         Ok(post_form) => {
 			let id: i32 = req.route.get("id").unwrap().parse().unwrap();
 			match service::update_post(id, post_form).await {

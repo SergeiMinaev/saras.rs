@@ -1,8 +1,7 @@
 use serde::Deserialize;
-use serde_json;
 use validator::{ Validate, ValidationError };
 use crate::http::{ Request };
-use crate::validation::{ ValidationErrors, parse_deser_error, make_validation_error };
+use crate::validation::{field_error, ValidationErrors, parse_json_validation};
 use crate::forms::image_field_form::ImageFieldForm;
 
 
@@ -48,31 +47,18 @@ pub struct CreateUserForm {
 impl CreateUserForm {
 	pub fn validate_pwd(pwd: &Option<String>) -> Result<(), ValidationErrors> {
 		if pwd.is_some() == false {
-			let mut errs = ValidationErrors::new();
-			errs.0.insert(
-				"pwd".to_string(),
-				make_validation_error("required", "Поле `пароль` должно быть заполнено.")
-			);
-			return Err(errs)
+			return Err(field_error("pwd", "required", "Поле `пароль` должно быть заполнено."))
 		}
 		Ok(())
 	}
 	pub fn validate(req: &Request) -> Result<UserForm, ValidationErrors> {
-		match serde_json::from_str::<UserForm>(&req.body_string) {
-			Err(e) => {
-				return Err(parse_deser_error(e))
+		let user_form: UserForm = parse_json_validation(&req.body_string)?;
+		match user_form.validate() {
+			Err(e) => Err(e.into()),
+			Ok(()) => match CreateUserForm::validate_pwd(&user_form.pwd) {
+				Err(e) => Err(e),
+				Ok(()) => Ok(user_form.clone()),
 			},
-			Ok(user_form) => {
-				match user_form.validate() {
-					Err(e) => Err(e.into()),
-					Ok(()) => {
-						match CreateUserForm::validate_pwd(&user_form.pwd) {
-							Err(e) => Err(e),
-							Ok(()) => Ok(user_form.clone())
-						}
-					},
-				}
-			}
 		}
 	}
 }
@@ -87,16 +73,10 @@ pub struct UpdateUserForm {
 
 impl UpdateUserForm {
 	pub fn validate(req: &Request) -> Result<UserForm, ValidationErrors> {
-		match serde_json::from_str::<UserForm>(&req.body_string) {
-			Err(e) => {
-				return Err(parse_deser_error(e))
-			},
-			Ok(user_form) => {
-				match user_form.validate() {
-					Err(e) => Err(e.into()),
-					Ok(()) => Ok(user_form.clone()),
-				}
-			}
+		let user_form: UserForm = parse_json_validation(&req.body_string)?;
+		match user_form.validate() {
+			Err(e) => Err(e.into()),
+			Ok(()) => Ok(user_form.clone()),
 		}
 	}
 }

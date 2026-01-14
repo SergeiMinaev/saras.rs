@@ -1,4 +1,5 @@
 use serde_json::json;
+use crate::validation::parse_json_validation;
 use crate::http::{Request,Resp};
 use crate::http;
 use crate::http::JsonResp;
@@ -63,9 +64,13 @@ async fn mark_read(req: Request) -> Resp {
 		None => return JsonResp::err("unauthorized", &Error::Auth).code(401).to_http(),
 		Some(u) => u
 	};
-	let form = match serde_json::from_str::<MarkReadForm>(&req.body_string) {
-		Err(_) => return JsonResp::err("Validation", &Error::Validation).to_http(),
-		Ok(f) => f
+	let form: MarkReadForm = match parse_json_validation(&req.body_string) {
+		Ok(f) => f,
+		Err(e) => {
+			return JsonResp::err("Validation", &Error::Validation)
+				.content(&e)
+				.to_http()
+		}
 	};
 	let ok = service::mark_read(user.id as i32, form.ids).await;
 	match ok {
@@ -79,9 +84,13 @@ async fn mark_all_before(req: Request) -> Resp {
 		None => return JsonResp::err("unauthorized", &Error::Auth).code(401).to_http(),
 		Some(u) => u
 	};
-	let form = match serde_json::from_str::<MarkAllBeforeForm>(&req.body_string) {
-		Err(_) => return JsonResp::err("Validation", &Error::Validation).to_http(),
-		Ok(f) => f
+	let form: MarkAllBeforeForm = match parse_json_validation(&req.body_string) {
+		Ok(f) => f,
+		Err(e) => {
+			return JsonResp::err("Validation", &Error::Validation)
+				.content(&e)
+				.to_http()
+		}
 	};
 	let n = service::mark_all_before(user.id as i32, &form.ts).await;
 	let j = json!({ "updated": n });

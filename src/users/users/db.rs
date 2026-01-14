@@ -12,6 +12,7 @@ use lpsql::pool::ConnectionPool;
 use crate::util::random_string;
 use crate::auth::auth::hashing;
 use std::sync::Arc;
+use validator::ValidateEmail;
 
 
 pub struct UserDb {
@@ -90,7 +91,7 @@ impl UserDb {
 		items.into_iter().map(|json| serde_json::from_str(&json).unwrap()).collect()
 	}
 	pub async fn create(&self, data: UserForm) -> Option<i32> {
-		if validator::validate_email(&data.email) == false { return None::<i32> }
+		if !data.email.validate_email() { return None::<i32> }
 		let argon2 = Argon2::default();
 		let salt = SaltString::generate(&mut OsRng);
 		let pwd = data.pwd.clone().unwrap_or_else(|| random_string(32));

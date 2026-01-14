@@ -1,8 +1,7 @@
 use serde::Deserialize;
-use serde_json;
 use validator::{ Validate, ValidationError };
 use crate::http::{ Request };
-use crate::validation::{ ValidationErrors, parse_deser_error, make_validation_error };
+use crate::validation::{ ValidationErrors, parse_json_validation };
 use crate::forms::image_field_form::ImageFieldForm;
 use crate::validation;
 use crate::users::users::db::UserDb;
@@ -24,16 +23,10 @@ pub struct RegForm {
 
 
 pub fn make_regform(req: &Request) -> Result<RegForm, ValidationErrors> {
-	match serde_json::from_str::<RegForm>(&req.body_string) {
-		Err(e) => {
-			return Err(parse_deser_error(e))
-		},
-		Ok(form) => {
-			match form.validate() {
-				Err(e) => Err(e.into()),
-				Ok(()) => Ok(form.clone()),
-			}
-		}
+	let form: RegForm = parse_json_validation(&req.body_string)?;
+	match form.validate() {
+		Err(e) => Err(e.into()),
+		Ok(()) => Ok(form.clone()),
 	}
 }
 

@@ -1,6 +1,5 @@
 use crate::serde::Deserialize;
-use crate::serde_json;
-use crate::validation::{ ValidationErrors, parse_deser_error, make_validation_error };
+use crate::validation::{field_error, ValidationErrors, parse_json_validation};
 use crate::http::{ Request };
 
 
@@ -31,28 +30,13 @@ pub struct CreatePostForm {
 impl CreatePostForm {
 	pub fn validate_pwd(pwd: &Option<String>) -> Result<(), ValidationErrors> {
 		if pwd.is_some() == false {
-			let mut errs = ValidationErrors::new();
-			errs.0.insert(
-				"pwd".to_string(),
-				make_validation_error("required", "Поле `пароль` должно быть заполнено.")
-			);
-			return Err(errs)
+			return Err(field_error("pwd", "required", "Поле `пароль` должно быть заполнено."))
 		}
 		Ok(())
 	}
 	pub fn validate(req: &Request) -> Result<PostForm, ValidationErrors> {
-		match serde_json::from_str::<PostForm>(&req.body_string) {
-			Err(e) => {
-				return Err(parse_deser_error(e))
-			},
-			Ok(post_form) => {
-				return Ok(post_form.clone())
-				//match post_form.validate() {
-				//	Err(e) => Err(e.into()),
-				//	Ok(()) => Ok(post_form.clone()),
-				//}
-			}
-		}
+		let post_form: PostForm = parse_json_validation(&req.body_string)?;
+		Ok(post_form.clone())
 	}
 }
 
@@ -67,17 +51,7 @@ pub struct UpdatePostForm {
 
 impl UpdatePostForm {
 	pub fn validate(req: &Request) -> Result<PostForm, ValidationErrors> {
-		match serde_json::from_str::<PostForm>(&req.body_string) {
-			Err(e) => {
-				return Err(parse_deser_error(e))
-			},
-			Ok(post_form) => {
-				return Ok(post_form.clone())
-				//match post_form.validate() {
-				//	Err(e) => Err(e.into()),
-				//	Ok(()) => Ok(post_form.clone()),
-				//}
-			}
-		}
+		let post_form: PostForm = parse_json_validation(&req.body_string)?;
+		Ok(post_form.clone())
 	}
 }

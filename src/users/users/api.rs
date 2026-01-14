@@ -79,7 +79,9 @@ pub async fn update_user(req: Request) -> Resp {
 	match UpdateUserForm::validate(&req) {
         Err(e) => {
 			debug!("{e:?}");
-			return JsonResp::err("Не удалось изменить пользователя.",&Error::Validation).to_http()
+			return JsonResp::err("Не удалось изменить пользователя.",&Error::Validation)
+				.content(&e)
+				.to_http()
 		},
         Ok(user_form) => {
 			let id: i32 = req.route.get("id").unwrap().parse().unwrap();
@@ -98,4 +100,3 @@ pub async fn delete_user(req: Request) -> Resp {
         Ok(()) => JsonResp::ok("Пользователь удалён.").to_http(),
     }
 }
-

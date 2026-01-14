@@ -19,6 +19,7 @@ use async_lock::RwLock;
 use sha2::{Sha256, Digest};
 use crate::conf::CONF;
 use crate::http::JsonResp;
+use crate::validation::field_error;
 use chrono::{Duration, Utc, DateTime};
 use rand::{Rng, thread_rng};
 use serde::{Deserialize, Serialize};
@@ -165,17 +166,25 @@ pub async fn handle_reg(form: &RegForm, sess_id: &str) -> Resp {
 		println!("Check code");
 		let code = form.code.clone().unwrap();
 		if is_code_active(&form.email).await == false {
-			let j = json!({"code": "code_inactive"});
 			return JsonResp::err("Запросите новый код подтверждения.", &Error::Validation)
-				.content(&j).to_http()
+				.content(&field_error(
+					"code",
+					"code_inactive",
+					"Запросите новый код подтверждения.",
+				))
+				.to_http()
 		}
 		let is_correct = check_code(&form.email, sess_id, &code).await;
 		if is_correct {
 			finish_reg(form, sess_id).await
 		} else {
-			let j = json!({"code": "bad_code"});
 			JsonResp::err("Неправильный код подтверждения.", &Error::Validation)
-				.content(&j).to_http()
+				.content(&field_error(
+					"code",
+					"bad_code",
+					"Неправильный код подтверждения.",
+				))
+				.to_http()
 		}
 	}
 }

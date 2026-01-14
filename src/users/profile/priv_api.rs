@@ -4,6 +4,7 @@ use crate::http::JsonResp;
 use crate::errors::Error;
 use crate::users::profile::service;
 use crate::users::profile::forms::SetNameForm;
+use crate::validation::{field_error, parse_json_validation};
 use crate::forms::image_field_form::ImageFieldForm;
 use crate::users::avatars::service::{update_avatar, delete_avatar};
 use crate::request::RequestTools;
@@ -25,8 +26,10 @@ pub async fn avatar(req: Request) -> Resp {
 
 
 pub async fn set_name(req: Request) -> Resp {
-	match serde_json::from_str::<SetNameForm>(&req.body_string) {
-        Err(_e) => JsonResp::err("Не удалось сохранить имя.", &Error::Validation).to_http(),
+	match parse_json_validation::<SetNameForm>(&req.body_string) {
+        Err(e) => JsonResp::err("Не удалось сохранить имя.", &Error::Validation)
+			.content(&e)
+			.to_http(),
         Ok(form) => {
 			let user = req.get_user().await.unwrap();
 			match service::set_name(user.id, &form.name).await {
@@ -40,7 +43,9 @@ pub async fn set_name(req: Request) -> Resp {
 pub async fn set_avatar(req: Request) -> Resp {
 	let user = req.get_user().await.unwrap();
 	match ImageFieldForm::validate(&req) {
-		Err(_e) => JsonResp::err("Не удалось сохранить аватар.", &Error::Validation).to_http(),
+		Err(e) => JsonResp::err("Не удалось сохранить аватар.", &Error::Validation)
+			.content(&e)
+			.to_http(),
 		Ok(form) => {
 			if form.del.unwrap_or(false) {
 				match delete_avatar(user.id.try_into().unwrap()).await {
@@ -48,7 +53,9 @@ pub async fn set_avatar(req: Request) -> Resp {
 					Err(e) => JsonResp::err("Не удалось удалить аватар.", &e).to_http(),
 				}
 			} else if form.data_base64.is_none() {
-				JsonResp::err("Не удалось сохранить аватар.", &Error::Validation).to_http()
+				JsonResp::err("Не удалось сохранить аватар.", &Error::Validation)
+					.content(&field_error("data_base64", "required", "Поле `data_base64` должно быть заполнено."))
+					.to_http()
 			} else {
 				match update_avatar(user.id.try_into().unwrap(), &form).await {
 					Ok(()) => JsonResp::ok("Аватар сохранён.").to_http(),

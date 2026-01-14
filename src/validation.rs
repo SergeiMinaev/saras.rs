@@ -1,6 +1,7 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
-use serde::{Serialize };
+use serde::de::DeserializeOwned;
+use serde::Serialize;
 use validator::ValidationError;
 use validator::ValidationErrorsKind;
 
@@ -13,6 +14,14 @@ pub struct ValidationErrors(pub HashMap<String, ValidationError>);
 impl ValidationErrors {
 	pub fn new() -> Self {
 		Self(HashMap::new())
+	}
+
+	pub fn push_field(&mut self, field: &str, err: ValidationError) {
+		self.0.insert(field.to_string(), err);
+	}
+
+	pub fn push_base(&mut self, err: ValidationError) {
+		self.0.insert("__base".to_string(), err);
 	}
 }
 
@@ -44,62 +53,65 @@ pub fn make_validation_error(code: &str, msg: &str) -> validator::ValidationErro
     }
 }
 
-
-pub fn parse_deser_error(e: serde_json::Error) -> ValidationErrors {
-	println!("validation error: {e}, done");
+pub fn field_error(field: &str, code: &str, msg: &str) -> ValidationErrors {
 	let mut errs = ValidationErrors::new();
-	let s = e.to_string();
+	errs.push_field(field, make_validation_error(code, msg));
+	errs
+}
 
-	if s.contains("missing field") && s.contains('`') {
-		let field = s.split('`').nth(1).unwrap_or_default();
-		let msg = format!("Поле `{field}` должно быть заполнено.");
-		let err = make_validation_error("missing_field", &msg);
-		errs.0.insert(field.to_string(), err);
+pub fn base_error(code: &str, msg: &str) -> ValidationErrors {
+	let mut errs = ValidationErrors::new();
+	errs.push_base(make_validation_error(code, msg));
+	errs
+}
+
+
+pub fn parse_json_validation<T: DeserializeOwned>(body: &str) -> Result<T, ValidationErrors> {
+	let mut deserializer = serde_json::Deserializer::from_str(body);
+	serde_path_to_error::deserialize(&mut deserializer).map_err(parse_deser_error)
+}
+
+pub fn parse_deser_error(e: serde_path_to_error::Error<serde_json::Error>) -> ValidationErrors {
+	let mut errs = ValidationErrors::new();
+	let path = e.path().to_string();
+	let inner = e.inner();
+	let s = inner.to_string();
+	let field = if path.is_empty() {
+		"__base".to_string()
+	} else {
+		path
+	};
+
+	if inner.is_syntax() || inner.is_eof() {
+		let err = make_validation_error("bad_json", "Некорректный JSON.");
+		errs.0.insert("__base".to_string(), err);
 		return errs;
 	}
 
-	if s.contains("required") {
-		for line in s.lines() {
-			let line = line.trim();
-			if line.is_empty() {
-				continue;
-			}
-
-			if line.contains("required") {
-				if let Some(colon_pos) = line.find(':') {
-					let mut field = line[..colon_pos].trim();
-					if field.starts_with('`') && field.ends_with('`') && field.len() > 1 {
-						field = &field[1..field.len() - 1];
-					}
-					if !field.is_empty() {
-						let msg = format!("Поле `{}` должно быть заполнено.", field);
-						let err = make_validation_error("missing_field", &msg);
-						errs.0.insert(field.to_string(), err);
-						continue;
-					}
-				}
-			}
-
-			if let Some(idx) = line.find("Validation error: required") {
-				let candidate = line[..idx].trim().trim_end_matches(':').trim();
-				if !candidate.is_empty() {
-					let field = candidate.trim_matches('`');
-					let msg = format!("Поле `{}` должно быть заполнено.", field);
-					let err = make_validation_error("missing_field", &msg);
-					errs.0.insert(field.to_string(), err);
-					continue;
-				}
-			}
-		}
-
-		if !errs.0.is_empty() {
-			return errs;
-		}
+	if s.contains("missing field") {
+		let field_name = if field == "__base" {
+			s.split('`').nth(1).unwrap_or_default().to_string()
+		} else {
+			field.clone()
+		};
+		let target = if field_name.is_empty() {
+			"__base".to_string()
+		} else {
+			field_name
+		};
+		let msg = if target == "__base" {
+			"Поле должно быть заполнено.".to_string()
+		} else {
+			format!("Поле `{}` должно быть заполнено.", target)
+		};
+		let err = make_validation_error("missing_field", &msg);
+		errs.0.insert(target, err);
+		return errs;
 	}
 
 	let err = make_validation_error("bad_type", "Одно из полей имеет неправильный тип.");
-	errs.0.insert("__base".to_string(), err);
-	return errs
+	errs.0.insert(field, err);
+	errs
 }
 
 
