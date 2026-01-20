@@ -12,6 +12,7 @@ use crate::validation::field_error;
 use crate::errors::Error;
 use crate::http::JsonResp;
 use crate::http::Resp;
+use crate::util::normalize_email;
 
 const RESET_TTL_MINUTES: i64 = 60;
 const RESET_COOLDOWN_SEC: i64 = 60;
@@ -33,22 +34,24 @@ pub async fn request_reset(form: &ResetRequestForm) -> Resp {
 	let userdb = UserDb::new(pool.clone());
 	let db = PasswordResetDb::new(pool.clone());
 
-	let in_cooldown = db.is_in_cooldown(&form.email, RESET_COOLDOWN_SEC).await;
-	let user = userdb.by_email(&form.email).await;
+	let email = normalize_email(&form.email);
+	let in_cooldown = db.is_in_cooldown(&email, RESET_COOLDOWN_SEC).await;
+	let user = userdb.by_email(&email).await;
 	if !in_cooldown {
 		if let Some(user) = user {
 			let token = gen_token();
 			let token_hash = hash_token(&token);
 			let expires_at = (Utc::now() + Duration::minutes(RESET_TTL_MINUTES)).to_rfc3339();
+			let user_id = i32::try_from(user.id).expect("user id fits i32");
 			let _ = db
-				.insert(user.id, &form.email, &token_hash, &expires_at, None, None)
+				.insert(user_id, &email, &token_hash, &expires_at, None, None)
 				.await;
 			let link = format!("{}/auth/password-reset?token={}", form.base_url, token);
 			let subject = "Восстановление пароля";
 			let body = format!(
 				"Чтобы установить новый пароль, перейдите по ссылке:\n\n{link}\n\nСсылка действует 60 минут."
 			);
-			let _ = send_plain_email(&form.email, subject, &body).await;
+			let _ = send_plain_email(&email, subject, &body).await;
 		}
 	}
 
@@ -63,21 +66,21 @@ pub async fn confirm_reset(form: &ResetConfirmForm) -> Resp {
 	let token_hash = hash_token(&form.token);
 	let entry = db.by_token_hash(&token_hash).await;
 	let Some(entry) = entry else {
-		let e = field_error("token", "bad_token", None);
+		let e = field_error("token", "bad_token", "Неверная ссылка восстановления.");
 		return JsonResp::err("Invalid token", &Error::Validation).content(&e).to_http();
 	};
 
 	if entry.used_at.is_some() {
-		let e = field_error("token", "token_used", None);
+		let e = field_error("token", "token_used", "Ссылка уже использована.");
 		return JsonResp::err("Invalid token", &Error::Validation).content(&e).to_http();
 	}
 
-	let Ok(expires_at) = entry.expires_at.parse::<chrono::DateTime<Utc>>() else {
-		let e = field_error("token", "bad_token", None);
+	let Ok(expires_at) = chrono::DateTime::parse_from_rfc3339(&entry.expires_at) else {
+		let e = field_error("token", "bad_token", "Неверная ссылка восстановления.");
 		return JsonResp::err("Invalid token", &Error::Validation).content(&e).to_http();
 	};
-	if Utc::now() > expires_at {
-		let e = field_error("token", "token_expired", None);
+	if Utc::now() > expires_at.with_timezone(&Utc) {
+		let e = field_error("token", "token_expired", "Ссылка больше не действует.");
 		return JsonResp::err("Invalid token", &Error::Validation).content(&e).to_http();
 	}
 

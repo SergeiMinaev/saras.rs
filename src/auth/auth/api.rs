@@ -9,6 +9,7 @@ use crate::users::users::db::UserDb;
 use crate::auth::auth::db::AuthDb;
 use crate::auth::auth::forms::make_regform;
 use log::debug;
+use crate::util::normalize_email;
 
 
 #[derive(Debug, Deserialize)]
@@ -32,10 +33,11 @@ pub async fn login(req: Request) -> Resp {
             if u_.is_valid() == false {
                 return json_resp(401, r#"{"err": "bad_login_input"}"#.to_string())
             }
+			let email = normalize_email(&u_.email);
 			let pool = get_pool();
 			let userdb = UserDb::new(pool.clone());
 			let authdb = AuthDb::new(pool.clone());
-            match userdb.by_email(&u_.email).await {
+            match userdb.by_email(&email).await {
                 None => {
                     return json_resp(401, r#"{"err": "user_not_found"}"#.to_string())
                 },

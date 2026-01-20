@@ -9,7 +9,7 @@ use argon2::{
 	Argon2
 };
 use lpsql::pool::ConnectionPool;
-use crate::util::random_string;
+use crate::util::{random_string, normalize_email};
 use crate::auth::auth::hashing;
 use std::sync::Arc;
 use validator::ValidateEmail;
@@ -62,6 +62,7 @@ impl UserDb {
 			.and_then(|v| serde_json::from_str(&v).ok())
 	}
 	pub async fn by_email(&self, email: &str) -> Option<User> {
+		let email = normalize_email(email);
 		let q = "select row_to_json(data) from (
 			select id, email as label, email, name, hash, is_superuser,
 			case when users.avatar is not null then
@@ -70,7 +71,7 @@ impl UserDb {
 			case when users.default_avatar is not null then
 				json_build_object('path', users.default_avatar)
 			else null end as default_avatar
-			from users_users as users where email = $1::TEXT
+			from users_users as users where lower(email) = $1::TEXT
 		) data";
 		Lpsql::query(q).bind(email).fetch_one(&self.pool).await
 			.and_then(|v| serde_json::from_str(&v).ok())
@@ -92,6 +93,7 @@ impl UserDb {
 	}
 	pub async fn create(&self, data: UserForm) -> Option<i32> {
 		if !data.email.validate_email() { return None::<i32> }
+		let email = normalize_email(&data.email);
 		let argon2 = Argon2::default();
 		let salt = SaltString::generate(&mut OsRng);
 		let pwd = data.pwd.clone().unwrap_or_else(|| random_string(32));
@@ -99,13 +101,13 @@ impl UserDb {
 		if let Some(name) = data.name {
 			let q = "insert into users_users (email, name, hash)
 				values ($1::TEXT, $2::TEXT, $3::TEXT) returning id";
-			Lpsql::query(q).bind(data.email).bind(name).bind(hash)
+			Lpsql::query(q).bind(email).bind(name).bind(hash)
 				.fetch_one(&self.pool).await
 				.map(|id| id.parse().unwrap())
 		} else {
 			let q = "insert into users_users (email, hash)
 				values ($1::TEXT, $2::TEXT) returning id";
-			Lpsql::query(q).bind(data.email).bind(hash)
+			Lpsql::query(q).bind(email).bind(hash)
 				.fetch_one(&self.pool).await
 				.map(|id| id.parse().unwrap())
 		}
@@ -115,6 +117,7 @@ impl UserDb {
 		self.by_id(id).await
 	}
 	pub async fn update(&self, id: i32, data: UserForm) -> Option<i32> {
+		let email = normalize_email(&data.email);
 		if data.name.is_some() {
 			let q = "update users_users set name = $2::TEXT
 				where id = $1::INT
@@ -125,7 +128,7 @@ impl UserDb {
 		let q = "update users_users set email = $2::TEXT, is_superuser = $3::BOOL 
 			where id = $1::INT
 			returning id";
-		Lpsql::query(q).bind(id).bind(data.email).bind(data.is_superuser.unwrap())
+		Lpsql::query(q).bind(id).bind(email).bind(data.is_superuser.unwrap())
 			.fetch_one(&self.pool).await
 			.map(|id| id.parse().unwrap())
 	}

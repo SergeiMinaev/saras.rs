@@ -1,7 +1,10 @@
+use std::sync::Arc;
 use lpsql::Lpsql;
-use lpsql::Pool;
+use lpsql::pool::ConnectionPool;
+use serde::Deserialize;
+use serde_json;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct PasswordResetEntry {
 	pub id: i64,
 	pub user_id: i32,
@@ -12,11 +15,11 @@ pub struct PasswordResetEntry {
 }
 
 pub struct PasswordResetDb {
-	pub pool: Pool,
+	pub pool: Arc<ConnectionPool>,
 }
 
 impl PasswordResetDb {
-	pub fn new(pool: Pool) -> Self {
+	pub fn new(pool: Arc<ConnectionPool>) -> Self {
 		Self { pool }
 	}
 
@@ -58,20 +61,17 @@ impl PasswordResetDb {
 	}
 
 	pub async fn by_token_hash(&self, token_hash: &str) -> Option<PasswordResetEntry> {
-		let q = "select id, user_id, email, token_hash, expires_at, used_at \
-			from auth_password_reset where token_hash = $1::TEXT limit 1";
-		Lpsql::query(q)
+		let q = "select row_to_json(data) from (
+			select id, user_id, email, token_hash,
+				to_char(expires_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') as expires_at,
+				case when used_at is not null then to_char(used_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') else null end as used_at
+			from auth_password_reset where token_hash = $1::TEXT limit 1
+		) data";
+		let row = Lpsql::query(q)
 			.bind(token_hash)
 			.fetch_one(&self.pool)
-			.await
-			.map(|row| PasswordResetEntry {
-				id: row.get("id").unwrap().parse().unwrap(),
-				user_id: row.get("user_id").unwrap().parse().unwrap(),
-				email: row.get("email").unwrap(),
-				token_hash: row.get("token_hash").unwrap(),
-				expires_at: row.get("expires_at").unwrap(),
-				used_at: row.get("used_at"),
-			})
+			.await?;
+		serde_json::from_str::<PasswordResetEntry>(&row).ok()
 	}
 
 	pub async fn mark_used(&self, id: i64) -> bool {

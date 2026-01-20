@@ -7,6 +7,7 @@ use crate::validation;
 use crate::users::users::db::UserDb;
 use crate::db::get_pool;
 use futures_lite::future;
+use crate::util::normalize_email;
 
 
 
@@ -37,7 +38,8 @@ fn validate_email(email: &str) ->  Result<(), ValidationError> {
 async fn avalidate_email(email: &str) ->  Result<(), ValidationError> {
 	let pool = get_pool();
 	let userdb = UserDb::new(pool.clone());
-	if userdb.by_email(email).await.is_some() {
+	let email = normalize_email(email);
+	if userdb.by_email(&email).await.is_some() {
 		return Err(ValidationError::new("Пользователь с таким email уже зарегистрирован."))
 	}
 	Ok(())

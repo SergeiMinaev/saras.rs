@@ -24,6 +24,7 @@ use chrono::{Duration, Utc, DateTime};
 use rand::{Rng, thread_rng};
 use serde::{Deserialize, Serialize};
 use crate::users::avatars::service::update_default_avatar;
+use crate::util::normalize_email;
 use crate::email::send_plain_email;
 
 
@@ -138,9 +139,10 @@ pub async fn drop_code(email: &str, sess_id: &str) {
 
 pub async fn handle_reg(form: &RegForm, sess_id: &str) -> Resp {
 	//debug!("{form:?}");
+	let email = normalize_email(&form.email);
 	if form.code.is_some() == false {
-		if is_ready_to_send_code(&form.email, sess_id).await {
-			let code = send_code(&form.email, sess_id).await;
+		if is_ready_to_send_code(&email, sess_id).await {
+			let code = send_code(&email, sess_id).await;
 			debug!("Code sent: {code}");
 			JsonResp::ok("Введите код подтверждения. Он был отправлен на указанный email.").to_http()
 		} else {
@@ -150,7 +152,7 @@ pub async fn handle_reg(form: &RegForm, sess_id: &str) -> Resp {
 	} else {
 		println!("Check code");
 		let code = form.code.clone().unwrap();
-		if is_code_active(&form.email).await == false {
+		if is_code_active(&email).await == false {
 			return JsonResp::err("Запросите новый код подтверждения.", &Error::Validation)
 				.content(&field_error(
 					"code",
@@ -159,9 +161,9 @@ pub async fn handle_reg(form: &RegForm, sess_id: &str) -> Resp {
 				))
 				.to_http()
 		}
-		let is_correct = check_code(&form.email, sess_id, &code).await;
+		let is_correct = check_code(&email, sess_id, &code).await;
 		if is_correct {
-			finish_reg(form, sess_id).await
+			finish_reg(form, sess_id, &email).await
 		} else {
 			JsonResp::err("Неправильный код подтверждения.", &Error::Validation)
 				.content(&field_error(
@@ -174,10 +176,10 @@ pub async fn handle_reg(form: &RegForm, sess_id: &str) -> Resp {
 	}
 }
 
-pub async fn finish_reg(form: &RegForm, sess_id: &str) -> Resp {
+pub async fn finish_reg(form: &RegForm, sess_id: &str, email: &str) -> Resp {
 	let userform = UserForm {
 		name: Some(form.name.clone()),
-		email: form.email.clone(),
+		email: email.to_string(),
 		pwd: Some(form.pwd.clone()),
 		is_superuser: Some(false),
 		avatar: None,
@@ -188,7 +190,7 @@ pub async fn finish_reg(form: &RegForm, sess_id: &str) -> Resp {
 	smol::spawn(async move {
 		let _ = update_default_avatar(user_id).await;
 	}).detach();
-	drop_code(&form.email, sess_id).await;
+	drop_code(email, sess_id).await;
 	let j = json!({"reg_complete": true});
 	JsonResp::ok("Регистрация завершена.").content(&j).to_http()
 }

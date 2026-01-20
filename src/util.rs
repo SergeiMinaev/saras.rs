@@ -91,3 +91,6 @@ pub fn random_string(len: usize) -> String {
 	thread_rng().sample_iter(&Alphanumeric).take(len).map(char::from).collect()
 }
 
+pub fn normalize_email(email: &str) -> String {
+	email.trim().to_lowercase()
+}
