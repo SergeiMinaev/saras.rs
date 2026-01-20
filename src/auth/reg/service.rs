@@ -24,9 +24,7 @@ use chrono::{Duration, Utc, DateTime};
 use rand::{Rng, thread_rng};
 use serde::{Deserialize, Serialize};
 use crate::users::avatars::service::update_default_avatar;
-use lettre::{Message, SmtpTransport, Transport};
-use lettre::transport::smtp::authentication::Credentials;
-use lettre::message::{Mailbox, header::ContentType};
+use crate::email::send_plain_email;
 
 
 static MEMSTORE: Lazy<RwLock<MemStore>> = Lazy::new(|| {
@@ -88,26 +86,13 @@ pub async fn send_code(email: &str, sess_id: &str) -> String {
 }
 
 pub async fn send_code_email(email: &str, code: &str) {
-	let conf = CONF.read().await;
-	let email = Message::builder()
-        .from(conf.smtp_login.parse::<Mailbox>().unwrap())
-        .to(email.parse::<Mailbox>().unwrap())
-        .subject("Код подтверждения endlesstrails.ru")
-        .header(ContentType::TEXT_PLAIN)
-        .body(format!("Ваш код подтверждения: {code}"))
-        .unwrap();
-	let creds = Credentials::new(
-		conf.smtp_login.clone(), conf.smtp_pwd.clone()
-	);
-	let mailer = SmtpTransport::relay(&conf.smtp_server)
-        .unwrap()
-        .credentials(creds)
-        .build();
+	let subject = "Код подтверждения endlesstrails.ru";
+	let body = format!("Ваш код подтверждения: {code}");
 	debug!("go send mail");
-	match mailer.send(&email) {
-        Ok(_) => println!("Письмо отправлено!"),
-        Err(e) => eprintln!("Ошибка: {:?}", e),
-    }
+	match send_plain_email(email, subject, &body).await {
+		Ok(_) => println!("Письмо отправлено!"),
+		Err(e) => eprintln!("Ошибка: {e}"),
+	}
 }
 
 pub async fn is_code_active(email: &str) -> bool {

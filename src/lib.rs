@@ -1,6 +1,7 @@
 pub mod auth;
 pub mod conf;
 pub mod default_app;
+pub mod email;
 pub mod http;
 pub mod listener;
 //pub mod l10n;

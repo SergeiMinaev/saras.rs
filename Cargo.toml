@@ -9,6 +9,7 @@ edition = "2021"
 name = "saras"
 path = "src/main.rs"
 
+
 [dependencies]
 argon2 = "0.4"
 async-executor = "1.8"
