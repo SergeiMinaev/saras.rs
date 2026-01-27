@@ -185,12 +185,15 @@ impl Storage {
 			Error::Storage
 		})?;
 		if resp.status() != StatusCode::OK {
-			eprintln!(
-				"[saras][storage] open non-200 path={} url={} status={}",
-				path.display(),
-				url,
-				resp.status()
-			);
+			// 404 is an expected "miss" in many call sites; avoid log spam.
+			if resp.status() != StatusCode::NOT_FOUND {
+				eprintln!(
+					"[saras][storage] open non-200 path={} url={} status={}",
+					path.display(),
+					url,
+					resp.status()
+				);
+			}
 			return Err(Error::Storage)
 		}
 
