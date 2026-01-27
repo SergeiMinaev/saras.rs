@@ -151,17 +151,46 @@ impl Storage {
 		let client = isahc::HttpClient::builder()
 			.automatic_decompression(false)
 			.build()
-			.map_err(|_| Error::Storage)?;
+			.map_err(|e| {
+				eprintln!(
+					"[saras][storage] open client build failed path={} err={:?}",
+					path.display(),
+					e
+				);
+				Error::Storage
+			})?;
 
 		let req = isahc::Request::builder()
 			.method("GET")
 			.uri(url.clone())
 			.header("X-Auth-Token", self.get_token().await)
 			.body(())
-			.map_err(|_| Error::Storage)?;
+			.map_err(|e| {
+				eprintln!(
+					"[saras][storage] open request build failed path={} url={} err={:?}",
+					path.display(),
+					url,
+					e
+				);
+				Error::Storage
+			})?;
 
-		let mut resp = client.send_async(req).await.map_err(|_| Error::Storage)?;
+		let mut resp = client.send_async(req).await.map_err(|e| {
+			eprintln!(
+				"[saras][storage] open send failed path={} url={} err={:?}",
+				path.display(),
+				url,
+				e
+			);
+			Error::Storage
+		})?;
 		if resp.status() != StatusCode::OK {
+			eprintln!(
+				"[saras][storage] open non-200 path={} url={} status={}",
+				path.display(),
+				url,
+				resp.status()
+			);
 			return Err(Error::Storage)
 		}
 
@@ -175,7 +204,17 @@ impl Storage {
 		// Read the async response body into a Vec<u8>.
 		let mut body = resp.into_body();
 		let mut bytes: Vec<u8> = Vec::new();
-		futures_lite::io::AsyncReadExt::read_to_end(&mut body, &mut bytes).await.map_err(|_| Error::Storage)?;
+		futures_lite::io::AsyncReadExt::read_to_end(&mut body, &mut bytes)
+			.await
+			.map_err(|e| {
+				eprintln!(
+					"[saras][storage] open read failed path={} url={} err={:?}",
+					path.display(),
+					url,
+					e
+				);
+				Error::Storage
+			})?;
 
 		let is_br = is_br_header
 			|| path.extension()
@@ -187,7 +226,15 @@ impl Storage {
 			let mut out: Vec<u8> = Vec::new();
 			let mut cursor = Cursor::new(bytes);
 			let mut dec = Decompressor::new(&mut cursor, 4096);
-			std::io::copy(&mut dec, &mut out).map_err(|_| Error::Storage)?;
+			std::io::copy(&mut dec, &mut out).map_err(|e| {
+				eprintln!(
+					"[saras][storage] open brotli decode failed path={} url={} err={:?}",
+					path.display(),
+					url,
+					e
+				);
+				Error::Storage
+			})?;
 			Ok(out)
 		} else {
 			Ok(bytes)
