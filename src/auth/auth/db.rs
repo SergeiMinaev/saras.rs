@@ -32,4 +32,19 @@ impl AuthDb {
 		};
 		self.by_id(sess_id).await
 	}
+
+	pub async fn refresh_if_needed(&self, sess_id: &str, ttl_days: i64, min_remaining_days: i64) -> bool {
+		let q = "update auth_sessions \
+			set expires = now() + ($2::INT || ' days')::interval \
+			where id = $1::BYTEA \
+			and expires > now() \
+			and expires < now() + ($3::INT || ' days')::interval";
+		let updated = Lpsql::query(q)
+			.bind(sess_id)
+			.bind(ttl_days)
+			.bind(min_remaining_days)
+			.exec(&self.pool)
+			.await;
+		updated > 0
+	}
 }
