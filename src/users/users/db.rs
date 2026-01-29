@@ -31,6 +31,19 @@ impl UserDb {
 		let q = "select count(*) from users_users";
 		Lpsql::query(q).fetch_one(&self.pool).await.unwrap().parse().unwrap()
 	}
+	pub async fn total_count_by_name(&self, query: &str) -> i32 {
+		let q = "select count(*)
+			from users_users
+			where coalesce(name, '') ilike $1::TEXT";
+		let pattern = format!("%{}%", query);
+		Lpsql::query(q)
+			.bind(pattern)
+			.fetch_one(&self.pool)
+			.await
+			.unwrap()
+			.parse()
+			.unwrap()
+	}
 	pub async fn by_session_id(&self, sess_id: &str) -> Option<User> {
 		let q = "select row_to_json(data) from (\
 			select users.id, email as label, email, name, hash, is_superuser,
@@ -89,6 +102,28 @@ impl UserDb {
 			order by id offset $1::INT limit $2::INT
 		) data";
 		let items = Lpsql::query(q).bind(offset).bind(size).fetch_all(&self.pool).await;
+		items.into_iter().map(|json| serde_json::from_str(&json).unwrap()).collect()
+	}
+	pub async fn page_by_name(&self, offset: i32, size: i32, query: &str) -> Vec<User> {
+		let q = "select row_to_json(data) from (
+			select id, email, email as label, name, hash, is_superuser,
+			case when users.avatar is not null then
+				json_build_object('path', users.avatar)
+			else null end as avatar,
+			case when users.default_avatar is not null then
+				json_build_object('path', users.default_avatar)
+			else null end as default_avatar
+			from users_users as users
+			where coalesce(name, '') ilike $3::TEXT
+			order by id offset $1::INT limit $2::INT
+		) data";
+		let pattern = format!("%{}%", query);
+		let items = Lpsql::query(q)
+			.bind(offset)
+			.bind(size)
+			.bind(pattern)
+			.fetch_all(&self.pool)
+			.await;
 		items.into_iter().map(|json| serde_json::from_str(&json).unwrap()).collect()
 	}
 	pub async fn create(&self, data: UserForm) -> Option<i32> {

@@ -58,8 +58,54 @@ pub async fn get_user(req: Request) -> Resp {
 pub async fn get_users(_req: Request) -> Resp {
 	let pool = get_pool();
 	let userdb = UserDb::new(pool.clone());
-	let users = userdb.page(0, 20).await;
-	JsonResp::ok("").content(&users).to_http()
+	let page = _req.query.get("page")
+		.and_then(|v| v.parse::<u64>().ok())
+		.filter(|v| *v > 0)
+		.unwrap_or(1);
+	let size = _req.query.get("size")
+		.and_then(|v| v.parse::<u64>().ok())
+		.filter(|v| *v > 0 && *v <= 200)
+		.unwrap_or(20);
+	let offset = ((page - 1) * size) as i32;
+	let limit = size as i32;
+	let q = _req
+		.query
+		.get("q")
+		.or_else(|| _req.query.get("name"))
+		.map(|v| v.trim().to_string())
+		.filter(|v| !v.is_empty());
+
+	let (users, total) = if let Some(query) = q {
+		(
+			userdb.page_by_name(offset, limit, &query).await,
+			userdb.total_count_by_name(&query).await,
+		)
+	} else {
+		(
+			userdb.page(offset, limit).await,
+			userdb.total_count().await,
+		)
+	};
+
+	let total_u64 = if total < 0 { 0 } else { total as u64 };
+	let total_pages = if total_u64 == 0 {
+		Some(1)
+	} else {
+		Some(((total_u64 + size - 1) / size).max(1))
+	};
+	let pagination = http::Pagination {
+		page,
+		per_page: size,
+		total: Some(total_u64),
+		total_pages,
+		next_page: total_pages.and_then(|tp| if page < tp { Some(page + 1) } else { None }),
+		prev_page: if page > 1 { Some(page - 1) } else { None },
+	};
+
+	let mut resp = JsonResp::ok("");
+	resp.content(&users);
+	resp.pagination(pagination);
+	resp.to_http()
 }
 
 pub async fn create_user(req: Request) -> Resp {
