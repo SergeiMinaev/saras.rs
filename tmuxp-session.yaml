@@ -17,7 +17,7 @@ windows:
 - window_name: ai
   panes:
     - shell_command:
-      - ./aider.sh
+      - ./codex.sh
 
 - window_name: code
   focus: true
