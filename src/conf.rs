@@ -36,6 +36,12 @@ pub struct SelectelConf {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct LegalDocsConf {
+	pub consent_key: String,
+	pub consent_version: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct Conf {
     pub socket_path: String,
     pub is_dev: bool,
@@ -56,6 +62,8 @@ pub struct Conf {
 	pub smtp_server: String,
 	pub smtp_login: String,
 	pub smtp_pwd: String,
+
+	pub legal_docs: LegalDocsConf,
 }
 
 impl Conf {

@@ -20,6 +20,8 @@ pub struct RegForm {
 	#[validate(length(min = 12, max=100), custom(function = "validate_pwd"))]
 	pub pwd: String,
 	pub code: Option<String>,
+	#[validate(custom(function = "validate_consent"))]
+	pub consent_personal_data: bool,
 }
 
 
@@ -51,4 +53,12 @@ fn validate_name(_email: &str) ->  Result<(), ValidationError> {
 
 fn validate_pwd(pwd: &str) ->  Result<(), ValidationError> {
 	validation::validate_pwd(pwd)
+}
+
+fn validate_consent(v: &bool) -> Result<(), ValidationError> {
+	if *v {
+		Ok(())
+	} else {
+		Err(ValidationError::new("consent_required"))
+	}
 }

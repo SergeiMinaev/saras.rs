@@ -18,6 +18,7 @@ use once_cell::sync::Lazy;
 use async_lock::RwLock;
 use sha2::{Sha256, Digest};
 use crate::conf::CONF;
+use crate::legal_docs::consents;
 use crate::http::JsonResp;
 use crate::validation::field_error;
 use chrono::{Duration, Utc, DateTime};
@@ -137,7 +138,8 @@ pub async fn drop_code(email: &str, sess_id: &str) {
 }
 
 
-pub async fn handle_reg(form: &RegForm, sess_id: &str) -> Resp {
+pub async fn handle_reg(form: &RegForm, req: &Request) -> Resp {
+	let sess_id = &req.session_id;
 	//debug!("{form:?}");
 	let email = normalize_email(&form.email);
 	if form.code.is_some() == false {
@@ -163,7 +165,7 @@ pub async fn handle_reg(form: &RegForm, sess_id: &str) -> Resp {
 		}
 		let is_correct = check_code(&email, sess_id, &code).await;
 		if is_correct {
-			finish_reg(form, sess_id, &email).await
+			finish_reg(form, req, &email).await
 		} else {
 			JsonResp::err("Неправильный код подтверждения.", &Error::Validation)
 				.content(&field_error(
@@ -176,7 +178,7 @@ pub async fn handle_reg(form: &RegForm, sess_id: &str) -> Resp {
 	}
 }
 
-pub async fn finish_reg(form: &RegForm, sess_id: &str, email: &str) -> Resp {
+pub async fn finish_reg(form: &RegForm, req: &Request, email: &str) -> Resp {
 	let userform = UserForm {
 		name: Some(form.name.clone()),
 		email: email.to_string(),
@@ -190,7 +192,32 @@ pub async fn finish_reg(form: &RegForm, sess_id: &str, email: &str) -> Resp {
 	smol::spawn(async move {
 		let _ = update_default_avatar(user_id).await;
 	}).detach();
-	drop_code(email, sess_id).await;
+	let consent_key = {
+		let conf = CONF.read().await;
+		conf.legal_docs.consent_key.clone()
+	};
+	let consent_version = {
+		let conf = CONF.read().await;
+		conf.legal_docs.consent_version.clone()
+	};
+	let ip = req.headers.get("x-real-ip")
+		.cloned()
+		.or_else(|| req.headers.get("x-forwarded-for")
+			.and_then(|v| v.split(',').next().map(|s| s.trim().to_string()))
+		)
+		.filter(|v| !v.is_empty());
+	let user_agent = req.headers.get("user-agent")
+		.cloned()
+		.filter(|v| !v.is_empty());
+	let _ = consents::create_consent(
+		user_id as i32,
+		&consent_key,
+		&consent_version,
+		"web",
+		ip,
+		user_agent,
+	).await;
+	drop_code(email, &req.session_id).await;
 	let j = json!({"reg_complete": true});
 	JsonResp::ok("Регистрация завершена.").content(&j).to_http()
 }

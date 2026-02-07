@@ -28,3 +28,7 @@ svc_user_name = "myusername"
 svc_user_pwd = "12345"
 token_lifetime_sec = 43200
 api_base_url = "https://swift.ru-1.storage.selcloud.ru/v1"
+
+[legal_docs]
+consent_key = "personal-data-consent"
+consent_version = "v1"

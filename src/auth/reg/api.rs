@@ -21,7 +21,7 @@ pub async fn reg(req: Request) -> Resp {
 			JsonResp::err("Ошибка валидации.", &Error::Validation).content(&e).to_http()
 		},
 		Ok(form) => {
-			service::handle_reg(&form, &req.session_id).await
+			service::handle_reg(&form, &req).await
 		}
 	}
 }
