@@ -5,6 +5,7 @@ use crate::validation::{ ValidationErrors, parse_json_validation };
 use crate::forms::image_field_form::ImageFieldForm;
 use crate::validation;
 use crate::users::users::db::UserDb;
+use crate::users::profile::db::ProfileDb;
 use crate::db::get_pool;
 use futures_lite::future;
 use crate::util::normalize_email;
@@ -47,7 +48,16 @@ async fn avalidate_email(email: &str) ->  Result<(), ValidationError> {
 	Ok(())
 }
 
-fn validate_name(_email: &str) ->  Result<(), ValidationError> {
+fn validate_name(name: &str) ->  Result<(), ValidationError> {
+	future::block_on(avalidate_name(name))
+}
+
+async fn avalidate_name(name: &str) -> Result<(), ValidationError> {
+	let pool = get_pool();
+	let profiledb = ProfileDb::new(pool.clone());
+	if profiledb.by_name(name).await.is_some() {
+		return Err(ValidationError::new("Пользователь с таким username уже зарегистрирован."))
+	}
 	Ok(())
 }
 

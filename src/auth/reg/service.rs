@@ -188,7 +188,18 @@ pub async fn finish_reg(form: &RegForm, req: &Request, email: &str) -> Resp {
 	};
 	let pool = get_pool();
 	let userdb = UserDb::new(pool);
-	let user_id = userdb.create(userform).await.unwrap();
+	let user_id = match userdb.create(userform).await {
+		Some(id) => id,
+		None => {
+			return JsonResp::err("Пользователь с таким email уже зарегистрирован.", &Error::Validation)
+				.content(&field_error(
+					"email",
+					"email_exists",
+					"Пользователь с таким email уже зарегистрирован.",
+				))
+				.to_http()
+		}
+	};
 	smol::spawn(async move {
 		let _ = update_default_avatar(user_id).await;
 	}).detach();

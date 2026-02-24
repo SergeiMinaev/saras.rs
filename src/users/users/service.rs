@@ -11,7 +11,7 @@ use crate::validation::validate_pwd;
 pub async fn create_user(user_form: UserForm) -> Result<User, Error> {
 	let pool = get_pool();
 	let userdb = UserDb::new(pool.clone());
-	let user = userdb.create_and_get(user_form.clone()).await.unwrap();
+	let user = userdb.create_and_get(user_form.clone()).await.ok_or(Error::Database)?;
 	if let Some(ref avatar) = user_form.avatar {
 		if avatar.data_base64.is_some() {
 			update_avatar(user.id.try_into().unwrap(), &avatar).await?;
@@ -41,7 +41,7 @@ pub async fn update_user(id: i32, user_form: UserForm) -> Result<User, Error> {
 		println!("dont update ava");
 	}
 	let userdb = UserDb::new(pool.clone());
-	Ok(userdb.update_and_get(id, user_form).await.unwrap())
+	userdb.update_and_get(id, user_form).await.ok_or(Error::Database)
 }
 
 pub async fn delete_user(id: i32) -> Result<(), Error> {

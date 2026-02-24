@@ -34,7 +34,7 @@ pub async fn login_by_email(email: &str) -> Option<Session> {
 				name: None,
 			};
 			debug!("Нужно создать: {form:?}");
-			let user = userdb.create_and_get(form).await.unwrap();
+			let user = userdb.create_and_get(form).await?;
 			debug!("444");
 			return authdb.add_session(Some(user.id)).await
 		},

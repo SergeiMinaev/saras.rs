@@ -84,7 +84,7 @@ impl UserDb {
 			case when users.default_avatar is not null then
 				json_build_object('path', users.default_avatar)
 			else null end as default_avatar
-			from users_users as users where lower(email) = $1::TEXT
+			from users_users as users where lower(btrim(email)) = $1::TEXT
 		) data";
 		Lpsql::query(q).bind(email).fetch_one(&self.pool).await
 			.and_then(|v| serde_json::from_str(&v).ok())
