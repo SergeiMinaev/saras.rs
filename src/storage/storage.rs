@@ -244,10 +244,13 @@ impl Storage {
 		}
 	}
 	pub async fn ls(&self, path: &PathBuf) -> Vec<String> {
-		let url = format!(
-			"{}?delimiter=/&prefix={}/",
-			self.base_url_for().await, path.display()
-		);
+		let raw_prefix = path.display().to_string();
+		let prefix = raw_prefix.trim_matches('/');
+		let url = if prefix.is_empty() {
+			format!("{}?delimiter=/", self.base_url_for().await)
+		} else {
+			format!("{}?delimiter=/&prefix={prefix}/", self.base_url_for().await)
+		};
 		//debug!("url: {url}");
 		let mut resp = isahc::Request::builder()
 			.method("GET")
@@ -265,8 +268,11 @@ impl Storage {
 		let data = String::from_utf8(bytes).unwrap();
 
 		data.split("\n")
-			.filter( |s| !s.is_empty() && (s.contains(".") || s.ends_with("/")) )
-			.map( |s| s.strip_prefix("orig/").unwrap_or(s).to_string())
+			.map(|s| s.trim())
+			.filter(|s| !s.is_empty() && (s.contains(".") || s.ends_with("/")))
+			.map(|s| s.strip_prefix("orig/").unwrap_or(s))
+			.filter(|s| !s.is_empty())
+			.map(|s| s.to_string())
 			.collect()
 	}
 	pub async fn delete<P: AsRef<Path>>(&self, path: P) -> Result<(), Error>{

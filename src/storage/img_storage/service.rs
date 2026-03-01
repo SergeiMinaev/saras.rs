@@ -7,7 +7,7 @@ use crate::util::norm_path;
 use crate::images::image_storage::ImageStorage;
 
 
-pub async fn upload_img(form: ImgStorageUploadForm) -> Result<(), Error> {
+pub async fn upload_img(form: ImgStorageUploadForm) -> Result<PathBuf, Error> {
 	let relative_path = match form.relative_path.as_ref() {
 		"" => &form.name,
 		_ => &form.relative_path,
@@ -22,8 +22,7 @@ pub async fn upload_img(form: ImgStorageUploadForm) -> Result<(), Error> {
 	let content = split.nth(1).unwrap_or_default();
 	let bytes = general_purpose::STANDARD.decode(content).unwrap();
 	let img_storage = ImageStorage::new();
-	let _path = img_storage.save(bytes, &path).await;
-	Ok(())
+	img_storage.save(bytes, &path).await
 }
 
 pub async fn delete_img(path: &PathBuf) -> Result<(), Error> {

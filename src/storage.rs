@@ -12,6 +12,7 @@ use crate::conf::CONF;
 use crate::util::{norm_path, random_string};
 
 pub mod img_storage;
+pub mod file_storage;
 pub mod errors;
 pub mod storage;
 pub mod util;

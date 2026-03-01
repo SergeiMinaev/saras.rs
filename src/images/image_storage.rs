@@ -76,6 +76,15 @@ impl ImageStorage {
 		Ok(result_path)
 	}
 	pub async fn  ls_imgs(&self, path: &PathBuf) -> Vec<String> {
+		let conf = CONF.read().await;
+		let ext = format!(
+			".{}",
+			conf.main_image_format
+				.trim()
+				.trim_start_matches('.')
+				.to_lowercase()
+		);
+		drop(conf);
 		let path = norm_path(format!("orig/{}", path.display()));
 		let path = PathBuf::from(path.strip_prefix("/").unwrap_or(&path));
 		let list: Vec<String> = self.storage.ls(&path).await;
@@ -83,9 +92,9 @@ impl ImageStorage {
 			.filter_map(|s| {
 				if s.ends_with('/') {
 					Some(s)
-				} else if s.ends_with(".jxl") {
+				} else if s.to_lowercase().ends_with(&ext) {
 					let mut s = s.clone();
-					s.truncate(s.len() - ".jxl".len());
+					s.truncate(s.len() - ext.len());
 					Some(s)
 				} else {
 					None

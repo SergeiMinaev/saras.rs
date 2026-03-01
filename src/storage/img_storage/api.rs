@@ -5,6 +5,7 @@ use crate::errors::Error;
 use crate::images::image_storage::ImageStorage;
 use crate::storage::img_storage::forms::ImgStorageUploadForm;
 use crate::storage::img_storage::service;
+use serde_json::json;
 
 
 pub async fn img_storage(req: Request) -> Resp {
@@ -38,11 +39,18 @@ pub async fn upload(req: Request) -> Resp {
 			.to_http()
 		},
     };
-    if let Err(e) = service::upload_img(form).await {
-        debug!("upload(): {e}");
-        return JsonResp::err("Не удалось загрузить изображение.", &Error::Storage).to_http();
-    }
-    JsonResp::ok("Изображение загружено.").to_http()
+    let path = match service::upload_img(form).await {
+		Ok(path) => path,
+		Err(e) => {
+			debug!("upload(): {e}");
+			return JsonResp::err("Не удалось загрузить изображение.", &Error::Storage).to_http();
+		},
+	};
+    JsonResp::ok("Изображение загружено.")
+		.content(&json!({
+			"path": path.display().to_string(),
+		}))
+		.to_http()
 }
 
 pub async fn delete(req: Request) -> Resp {
