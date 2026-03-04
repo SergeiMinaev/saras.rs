@@ -49,6 +49,8 @@ pub struct Conf {
 
 	pub main_image_size: String,
 	pub main_image_format: String,
+	#[serde(default = "default_img_shrink_quality_mode")]
+	pub img_shrink_quality_mode: String,
 	pub image_formats: Vec<String>,
 	pub image_sizes: Vec<ImageSize>,
 
@@ -64,6 +66,10 @@ pub struct Conf {
 	pub smtp_pwd: String,
 
 	pub legal_docs: LegalDocsConf,
+}
+
+fn default_img_shrink_quality_mode() -> String {
+	"medium".to_string()
 }
 
 impl Conf {

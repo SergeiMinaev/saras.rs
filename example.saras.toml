@@ -3,6 +3,7 @@ is_dev = true
 
 main_image_size = "1900x1900"
 main_image_format = "jxl"
+img_shrink_quality_mode = "medium"
 image_formats = ["jxl", "webp"]
 
 [[image_sizes]]
