@@ -27,7 +27,7 @@ pub async fn save_image_field(
 		return Ok(current);
 	};
 
-	let storage = ImageStorage::new();
+	let storage = ImageStorage::builder().high().build();
 
 	if form.del.unwrap_or(false) {
 		if let Some(path) = current.clone() {

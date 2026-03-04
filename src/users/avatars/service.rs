@@ -21,7 +21,7 @@ use crate::users::users::db::UserDb;
 pub async fn update_avatar(user_id: i32, form: &ImageFieldForm) -> Result<(), Error> {
 	println!("update_avatar {user_id}");
 	let _ = delete_avatar(user_id).await;
-	let img_storage = ImageStorage::new();
+	let img_storage = ImageStorage::builder().high().build();
 	let bytes = decode_base64(&form.data_base64.clone().unwrap())?;
 	let path = PathBuf::from("users/avatars").join(form.path.clone());
 	debug!("ava form path: {}", &form.path.display());
@@ -84,7 +84,7 @@ pub async fn update_default_avatar(user_id: i32) -> Result<(), Error> {
 	}
 	let name = user.name.unwrap();
 	let ava = generate_avatar(&name);
-	let img_storage = ImageStorage::new();
+	let img_storage = ImageStorage::builder().high().build();
 	let path = PathBuf::from("users/avatars").join(format!("{name}.png"));
 	let bytes = rgb_image_to_bytes(&ava);
 	let path = img_storage.save(bytes, &path).await?;

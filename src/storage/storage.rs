@@ -291,7 +291,7 @@ impl Storage {
 		//debug!("storage resp: {resp:?}");
 		//debug!("storage status: {:?}", resp.status());
 		match resp.status() {
-			StatusCode::NO_CONTENT => return Ok(()),
+			StatusCode::NO_CONTENT | StatusCode::NOT_FOUND => return Ok(()),
 			_ => return Err(Error::Storage),
 		}
 	}

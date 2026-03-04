@@ -21,7 +21,7 @@ pub async fn upload_img(form: ImgStorageUploadForm) -> Result<PathBuf, Error> {
 	let mut split = form.data.split(",");
 	let content = split.nth(1).unwrap_or_default();
 	let bytes = general_purpose::STANDARD.decode(content).unwrap();
-	let img_storage = ImageStorage::new();
+	let img_storage = ImageStorage::builder().high().build();
 	img_storage.save(bytes, &path).await
 }
 
