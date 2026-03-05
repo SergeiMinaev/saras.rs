@@ -31,6 +31,8 @@ pub struct User {
 	pub avatar: Option<ImageField>,
 	pub default_avatar: Option<ImageField>,
 	pub name: Option<String>,
+	pub created_at: String,
+	pub updated_at: String,
 }
 
 impl BaseModel for User {

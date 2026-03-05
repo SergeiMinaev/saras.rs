@@ -14,7 +14,8 @@ impl ProfileDb {
 		ProfileDb { pool }
 	}
 	pub async fn set_name(&self, id: u32, name: &str) -> bool {
-		let q = "update users_users set name = $2::TEXT where id = $1::INT returning id";
+		let q = "update users_users set name = $2::TEXT, updated_at = now()
+			where id = $1::INT returning id";
 		Lpsql::query(q).bind(id).bind(name).exec(&self.pool).await != 0
 	}
 	pub async fn by_id(&self, id: i32) -> Option<Profile> {

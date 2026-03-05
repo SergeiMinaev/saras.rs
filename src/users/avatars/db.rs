@@ -39,7 +39,8 @@ impl AvatarDb {
 		serde_json::from_str(&a).map_err(|_| ())
 	}
 	pub async fn save(&self, user_id: i32, rel_path: &str) -> Result<(), Error> {
-		let q = "update users_users set avatar = $2::TEXT where id = $1::INT";
+		let q = "update users_users set avatar = $2::TEXT, updated_at = now()
+			where id = $1::INT";
 		let r = Lpsql::query(q).bind(user_id).bind(rel_path).exec(&self.pool).await;
 		if r == 1 {
 			Ok(())
@@ -48,7 +49,8 @@ impl AvatarDb {
 		}
 	}
 	pub async fn save_default(&self, user_id: i32, rel_path: &str) -> Result<(), Error> {
-		let q = "update users_users set default_avatar = $2::TEXT where id = $1::INT";
+		let q = "update users_users set default_avatar = $2::TEXT, updated_at = now()
+			where id = $1::INT";
 		let r = Lpsql::query(q).bind(user_id).bind(rel_path).exec(&self.pool).await;
 		if r == 1 {
 			Ok(())
@@ -57,11 +59,13 @@ impl AvatarDb {
 		}
 	}
 	pub async fn delete(&self, user_id: i32) -> bool {
-		let q = "update users_users set avatar = null where id = $1::INT";
+		let q = "update users_users set avatar = null, updated_at = now()
+			where id = $1::INT";
 		Lpsql::query(q).bind(user_id).exec(&self.pool).await != 0
 	}
 	pub async fn delete_default(&self, user_id: i32) -> bool {
-		let q = "update users_users set default_avatar = null where id = $1::INT";
+		let q = "update users_users set default_avatar = null, updated_at = now()
+			where id = $1::INT";
 		Lpsql::query(q).bind(user_id).exec(&self.pool).await != 0
 	}
 }

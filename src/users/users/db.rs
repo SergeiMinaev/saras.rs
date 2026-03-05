@@ -52,7 +52,9 @@ impl UserDb {
 			else null end as avatar,
 			case when users.default_avatar is not null then
 				json_build_object('path', users.default_avatar)
-			else null end as default_avatar
+			else null end as default_avatar,
+			to_char(users.created_at at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') as created_at,
+			to_char(users.updated_at at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') as updated_at
 			from users_users as users join auth_sessions as session \
 			on users.id = session.user_id where session.id = $1::BYTEA \
 			and session.expires > now()
@@ -68,7 +70,9 @@ impl UserDb {
 			else null end as avatar,
 			case when users.default_avatar is not null then
 				json_build_object('path', users.default_avatar)
-			else null end as default_avatar
+			else null end as default_avatar,
+			to_char(users.created_at at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') as created_at,
+			to_char(users.updated_at at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') as updated_at
 			from users_users as users where id = $1::INT
 		) data";
 		Lpsql::query(q).bind(id).fetch_one(&self.pool).await
@@ -83,7 +87,9 @@ impl UserDb {
 			else null end as avatar,
 			case when users.default_avatar is not null then
 				json_build_object('path', users.default_avatar)
-			else null end as default_avatar
+			else null end as default_avatar,
+			to_char(users.created_at at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') as created_at,
+			to_char(users.updated_at at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') as updated_at
 			from users_users as users where lower(btrim(email)) = $1::TEXT
 		) data";
 		Lpsql::query(q).bind(email).fetch_one(&self.pool).await
@@ -97,7 +103,9 @@ impl UserDb {
 			else null end as avatar,
 			case when users.default_avatar is not null then
 				json_build_object('path', users.default_avatar)
-			else null end as default_avatar
+			else null end as default_avatar,
+			to_char(users.created_at at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') as created_at,
+			to_char(users.updated_at at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') as updated_at
 			from users_users as users
 			order by id offset $1::INT limit $2::INT
 		) data";
@@ -112,7 +120,9 @@ impl UserDb {
 			else null end as avatar,
 			case when users.default_avatar is not null then
 				json_build_object('path', users.default_avatar)
-			else null end as default_avatar
+			else null end as default_avatar,
+			to_char(users.created_at at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') as created_at,
+			to_char(users.updated_at at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') as updated_at
 			from users_users as users
 			where coalesce(name, '') ilike $3::TEXT
 			order by id offset $1::INT limit $2::INT
@@ -154,13 +164,13 @@ impl UserDb {
 	pub async fn update(&self, id: i32, data: UserForm) -> Option<i32> {
 		let email = normalize_email(&data.email);
 		if data.name.is_some() {
-			let q = "update users_users set name = $2::TEXT
+			let q = "update users_users set name = $2::TEXT, updated_at = now()
 				where id = $1::INT
 				returning id";
 			let _ = Lpsql::query(q).bind(id).bind(data.name.unwrap())
 				.fetch_one(&self.pool).await;
 		}
-		let q = "update users_users set email = $2::TEXT, is_superuser = $3::BOOL 
+		let q = "update users_users set email = $2::TEXT, is_superuser = $3::BOOL, updated_at = now()
 			where id = $1::INT
 			returning id";
 		Lpsql::query(q).bind(id).bind(email).bind(data.is_superuser.unwrap())
@@ -169,7 +179,8 @@ impl UserDb {
 	}
 	pub async fn set_password(&self, id: i32, pwd: &str) -> bool {
 		let hash = hashing::hash_pwd(pwd);
-		let q = "update users_users set hash = $2::TEXT where id = $1::INT returning id";
+		let q = "update users_users set hash = $2::TEXT, updated_at = now()
+			where id = $1::INT returning id";
 		Lpsql::query(q).bind(id).bind(hash).fetch_one(&self.pool).await.is_some()
 	}
 	pub async fn update_and_get(&self, id: i32, data: UserForm) -> Option<User> {
