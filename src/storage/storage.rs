@@ -68,6 +68,8 @@ pub fn randomize_path(mut path: PathBuf) -> PathBuf {
 
 pub struct Storage {
 	use_map: bool,
+	container_override: Option<String>,
+	api_base_override: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -90,22 +92,66 @@ pub struct ContainerCorsState {
 
 impl Storage {
 	pub fn new() -> Self {
-		Self { use_map: false }
+		Self {
+			use_map: false,
+			container_override: None,
+			api_base_override: None,
+		}
 	}
 	pub fn with_map() -> Self {
-		Self { use_map: true }
+		Self {
+			use_map: true,
+			container_override: None,
+			api_base_override: None,
+		}
+	}
+	pub fn with_container(container: impl Into<String>) -> Self {
+		let container = container.into().trim().to_string();
+		assert!(
+			!container.is_empty(),
+			"[saras] Storage::with_container: empty container name"
+		);
+		Self {
+			use_map: false,
+			container_override: Some(container),
+			api_base_override: None,
+		}
+	}
+	pub fn with_container_and_base_url(
+		container: impl Into<String>,
+		api_base_url: impl Into<String>,
+	) -> Self {
+		let container = container.into().trim().to_string();
+		let api_base_url = api_base_url.into().trim().to_string();
+		assert!(
+			!container.is_empty(),
+			"[saras] Storage::with_container_and_base_url: empty container name"
+		);
+		assert!(
+			!api_base_url.is_empty(),
+			"[saras] Storage::with_container_and_base_url: empty api base url"
+		);
+		Self {
+			use_map: false,
+			container_override: Some(container),
+			api_base_override: Some(api_base_url),
+		}
 	}
 }
 impl Storage {
 	async fn base_url_for(&self) -> String {
 		let conf = CONF.read().await;
-		let base = if self.use_map {
+		let base = if let Some(b) = self.api_base_override.as_ref() {
+			b
+		} else if self.use_map {
 			&conf.selectel.map_api_base_url
 		} else {
 			&conf.selectel.api_base_url
 		};
 		let proj_id = &conf.selectel.proj_id;
-		let container = if self.use_map {
+		let container = if let Some(c) = self.container_override.as_ref() {
+			c
+		} else if self.use_map {
 			&conf.selectel.map_container_name
 		} else {
 			&conf.selectel.container_name
@@ -135,6 +181,38 @@ impl Storage {
 			Error::Storage
 		})?;
 		Ok(resp.status() == StatusCode::OK)
+	}
+
+	pub async fn stat_content_length<P: AsRef<Path>>(&self, path: P) -> Result<Option<u64>, Error>{
+		let token = self.get_token().await;
+		let url = self.api_url_for(path.as_ref()).await;
+		let req = isahc::Request::builder()
+			.method("HEAD")
+			.uri(url.clone())
+			.header("X-Auth-Token", token)
+			.body(())
+			.map_err(|_| Error::Storage)?;
+		let resp = req.send_async().await.map_err(|e| {
+			eprintln!(
+				"[saras][storage] stat_content_length failed path={} err={:?}",
+				path.as_ref().display(),
+				e
+			);
+			Error::Storage
+		})?;
+		if resp.status() == StatusCode::NOT_FOUND {
+			return Ok(None);
+		}
+		if resp.status() != StatusCode::OK {
+			return Err(Error::Storage);
+		}
+		let len = resp
+			.headers()
+			.get("Content-Length")
+			.or_else(|| resp.headers().get("content-length"))
+			.and_then(|v| v.to_str().ok())
+			.and_then(|s| s.parse::<u64>().ok());
+		Ok(len)
 	}
 	pub async fn open(&self, path: &PathBuf) -> Result<Vec<u8>, Error> {
 		// If `path` is an absolute URL (starts with http:// or https://),
@@ -561,7 +639,9 @@ impl Storage {
 
 	pub async fn set_container_cors(&self, cors: &ContainerCors) -> Result<(), String> {
 		let conf = CONF.read().await;
-		let bucket = if self.use_map {
+		let bucket = if let Some(c) = self.container_override.as_ref() {
+			c.trim().to_string()
+		} else if self.use_map {
 			conf.selectel.map_container_name.trim().to_string()
 		} else {
 			conf.selectel.container_name.trim().to_string()
@@ -580,7 +660,9 @@ impl Storage {
 			.map(|s| s.trim().to_string())
 			.filter(|v| !v.is_empty())
 			.ok_or_else(|| "[saras] missing selectel.s3_secret_access_key".to_string())?;
-		let api_base = if self.use_map {
+		let api_base = if let Some(b) = self.api_base_override.as_ref() {
+			b.trim().to_string()
+		} else if self.use_map {
 			conf.selectel.map_api_base_url.trim().to_string()
 		} else {
 			conf.selectel.api_base_url.trim().to_string()
@@ -643,7 +725,9 @@ impl Storage {
 
 	pub async fn get_container_cors(&self) -> Result<ContainerCorsState, String> {
 		let conf = CONF.read().await;
-		let bucket = if self.use_map {
+		let bucket = if let Some(c) = self.container_override.as_ref() {
+			c.trim().to_string()
+		} else if self.use_map {
 			conf.selectel.map_container_name.trim().to_string()
 		} else {
 			conf.selectel.container_name.trim().to_string()
@@ -662,7 +746,9 @@ impl Storage {
 			.map(|s| s.trim().to_string())
 			.filter(|v| !v.is_empty())
 			.ok_or_else(|| "[saras] missing selectel.s3_secret_access_key".to_string())?;
-		let api_base = if self.use_map {
+		let api_base = if let Some(b) = self.api_base_override.as_ref() {
+			b.trim().to_string()
+		} else if self.use_map {
 			conf.selectel.map_api_base_url.trim().to_string()
 		} else {
 			conf.selectel.api_base_url.trim().to_string()
@@ -729,7 +815,9 @@ impl Storage {
 		content_type: Option<&str>,
 	) -> Result<String, String> {
 		let conf = CONF.read().await;
-		let bucket = if self.use_map {
+		let bucket = if let Some(c) = self.container_override.as_ref() {
+			c.trim().to_string()
+		} else if self.use_map {
 			conf.selectel.map_container_name.trim().to_string()
 		} else {
 			conf.selectel.container_name.trim().to_string()
@@ -748,7 +836,9 @@ impl Storage {
 			.map(|s| s.trim().to_string())
 			.filter(|v| !v.is_empty())
 			.ok_or_else(|| "[saras] missing selectel.s3_secret_access_key".to_string())?;
-		let api_base = if self.use_map {
+		let api_base = if let Some(b) = self.api_base_override.as_ref() {
+			b.trim().to_string()
+		} else if self.use_map {
 			conf.selectel.map_api_base_url.trim().to_string()
 		} else {
 			conf.selectel.api_base_url.trim().to_string()

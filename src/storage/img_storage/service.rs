@@ -20,7 +20,9 @@ pub async fn upload_img(form: ImgStorageUploadForm) -> Result<PathBuf, Error> {
 	let path = path.strip_prefix("/").unwrap_or(&path).to_path_buf();
 	let mut split = form.data.split(",");
 	let content = split.nth(1).unwrap_or_default();
-	let bytes = general_purpose::STANDARD.decode(content).unwrap();
+	let bytes = general_purpose::STANDARD
+		.decode(content)
+		.map_err(|_| Error::Validation)?;
 	let img_storage = ImageStorage::builder().high().build();
 	img_storage.save(bytes, &path).await
 }

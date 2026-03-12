@@ -1,11 +1,16 @@
+use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::sync::Mutex;
 use std::path::PathBuf;
-use log::debug;
+use log::{debug, error};
+use once_cell::sync::Lazy;
 use crate::errors::Error;
 use crate::storage::storage::Storage;
 use crate::storage::util::open_local_file;
 use crate::conf::CONF;
 use crate::util::norm_path;
 use img_shrink::EncodeOptionsBuilder;
+
+static IMG_SHRINK_PANIC_HOOK_GUARD: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
 #[derive(Clone, Copy)]
 pub enum ImgShrinkMode {
@@ -65,6 +70,28 @@ impl ImageStorageBuilder {
 }
 
 impl ImageStorage {
+	fn with_caught_img_shrink_panic<T, F>(
+		orig_format: &str,
+		target_format: &str,
+		f: F,
+	) -> Result<T, Error>
+	where
+		F: FnOnce() -> T,
+	{
+		let guard = IMG_SHRINK_PANIC_HOOK_GUARD
+			.lock()
+			.map_err(|_| Error::Storage)?;
+		let prev_hook = std::panic::take_hook();
+		std::panic::set_hook(Box::new(|_| {}));
+		let res = catch_unwind(AssertUnwindSafe(f));
+		std::panic::set_hook(prev_hook);
+		drop(guard);
+		res.map_err(|_| {
+			error!("img-shrink panic: from={} to={}", orig_format, target_format);
+			Error::Storage
+		})
+	}
+
 	pub fn new() -> Self {
 		Self::builder().build()
 	}
@@ -111,7 +138,9 @@ impl ImageStorage {
 		let enc_opts = shrink_mode
 			.apply(img_shrink::EncodeOptionsBuilder::new().size(&conf.main_image_size))
 			.build();
-		let main_tmp = img_shrink::encode(&data, orig_format, main_format, enc_opts);
+		let main_tmp = Self::with_caught_img_shrink_panic(orig_format, main_format, || {
+			img_shrink::encode(&data, orig_format, main_format, enc_opts)
+		})?;
 		let main_img_data = open_local_file(&main_tmp.path().to_path_buf()).await;
 		let mut result_path = self.storage.save(main_img_data, &path).await?;
 		result_path.set_extension("");
@@ -126,7 +155,9 @@ impl ImageStorage {
 				let enc_opts = shrink_mode
 					.apply(img_shrink::EncodeOptionsBuilder::new().size(&size.size))
 					.build();
-				let variant_tmp = img_shrink::encode(&data, orig_format, format, enc_opts);
+				let variant_tmp = Self::with_caught_img_shrink_panic(orig_format, format, || {
+					img_shrink::encode(&data, orig_format, format, enc_opts)
+				})?;
 				let variant_data = open_local_file(&variant_tmp.path().to_path_buf()).await;
 				let variant_path = self.storage.save(variant_data, &path).await?;
 				debug!("variant: {}", variant_path.display());
