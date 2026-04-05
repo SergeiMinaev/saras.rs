@@ -76,7 +76,7 @@ pub fn parse_deser_error(e: serde_path_to_error::Error<serde_json::Error>) -> Va
 	let path = e.path().to_string();
 	let inner = e.inner();
 	let s = inner.to_string();
-	let field = if path.is_empty() {
+	let field = if path.is_empty() || path == "." {
 		"__base".to_string()
 	} else {
 		path
