@@ -76,6 +76,33 @@ pub fn slugify<T: AsRef<Path>>(input: T) -> String {
 	_translit(input, true)
 }
 
+pub fn slugify_strict<T: AsRef<Path>>(input: T) -> String {
+    let translit = slugify(input);
+    let mut output = String::with_capacity(translit.len());
+    let mut prev_dash = false;
+
+    for ch in translit.chars() {
+        let c = ch.to_ascii_lowercase();
+        if c.is_ascii_alphanumeric() {
+            output.push(c);
+            prev_dash = false;
+            continue;
+        }
+        if matches!(c, '-' | '_' | '/' | '.' | ' ') {
+            if !output.is_empty() && !prev_dash {
+                output.push('-');
+                prev_dash = true;
+            }
+        }
+    }
+
+    while output.ends_with('-') {
+        output.pop();
+    }
+
+    output
+}
+
 pub fn encode_base64(content: &str) -> String {
 	general_purpose::STANDARD.encode(content)
 }
@@ -93,4 +120,21 @@ pub fn random_string(len: usize) -> String {
 
 pub fn normalize_email(email: &str) -> String {
 	email.trim().to_lowercase()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{slugify, slugify_strict};
+
+    #[test]
+    fn slugify_keeps_legacy_path_style_behavior() {
+        assert_eq!(slugify(" Shimano XT / M8100 "), "-Shimano-XT-/-M8100-");
+    }
+
+    #[test]
+    fn slugify_strict_builds_clean_url_slug() {
+        assert_eq!(slugify_strict(" Shimano XT / M8100 "), "shimano-xt-m8100");
+        assert_eq!(slugify_strict("Кассеты XT"), "kassety-xt");
+        assert_eq!(slugify_strict("___/../"), "");
+    }
 }
