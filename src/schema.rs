@@ -114,3 +114,15 @@ pub fn datetime_field_schema(gen: &mut schemars::gen::SchemaGenerator) -> Schema
     }
     schema
 }
+
+/// Add "format": "date" to the schema for date-only fields stored as strings.
+/// Usage:
+/// 	#[schemars(schema_with = "date_field_schema")]
+/// 	pub measured_at: Option<String>,
+pub fn date_field_schema(gen: &mut schemars::gen::SchemaGenerator) -> Schema {
+    let mut schema = String::json_schema(gen);
+    if let Schema::Object(ref mut obj) = schema {
+        obj.format = Some("date".to_string());
+    }
+    schema
+}
