@@ -98,3 +98,19 @@ pub fn textfield_schema(gen: &mut schemars::gen::SchemaGenerator) -> Schema {
     }
     schema
 }
+
+/// Add "format": "date-time" to the schema for datetime fields stored as strings.
+/// Usage:
+/// #[derive(Serialize, Deserialize, Debug, schemars::JsonSchema)]
+/// pub struct Event {
+/// 	pub id: u32,
+/// 	#[schemars(schema_with = "datetime_field_schema")]
+/// 	pub measured_at: Option<String>,
+/// }
+pub fn datetime_field_schema(gen: &mut schemars::gen::SchemaGenerator) -> Schema {
+    let mut schema = String::json_schema(gen);
+    if let Schema::Object(ref mut obj) = schema {
+        obj.format = Some("date-time".to_string());
+    }
+    schema
+}
