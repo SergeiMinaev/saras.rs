@@ -47,6 +47,7 @@ pub async fn update_user(id: i32, user_form: UserForm) -> Result<User, Error> {
 pub async fn delete_user(id: i32) -> Result<(), Error> {
 	let pool = get_pool();
 	let userdb = UserDb::new(pool.clone());
+	let _ = delete_avatar(id).await;
 	if userdb.delete(id).await == true {
 		Ok(())
 	} else {
