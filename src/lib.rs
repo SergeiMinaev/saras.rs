@@ -1,3 +1,4 @@
+pub mod analytics;
 pub mod auth;
 pub mod conf;
 pub mod default_app;
