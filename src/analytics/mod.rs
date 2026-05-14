@@ -28,8 +28,10 @@ pub fn record(ip: &str, path: &str) {
 }
 
 fn extract_section(path: &str) -> &str {
-    let p = path
-        .trim_start_matches("/api/pub/")
-        .trim_start_matches("/api/priv/");
+    let p = path.trim_start_matches("/api/");
+    let p = p
+        .trim_start_matches("pub/")
+        .trim_start_matches("priv/")
+        .trim_start_matches("admin/");
     p.splitn(2, '/').next().unwrap_or("other")
 }
