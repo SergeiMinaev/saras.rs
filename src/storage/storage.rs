@@ -40,9 +40,10 @@ fn storage_client() -> &'static isahc::HttpClient {
 	STORAGE_CLIENT.get_or_init(|| {
 		isahc::HttpClient::builder()
 			.automatic_decompression(false)
-			.max_connections(20)
-			.max_connections_per_host(8)
-			.connection_cache_size(8)
+			.max_connections(10)
+			.max_connections_per_host(3)
+			.connection_cache_size(3)
+			.tcp_keepalive(StdDuration::from_secs(20))
 			.timeout(StdDuration::from_secs(60))
 			.connect_timeout(StdDuration::from_secs(15))
 			.build()
