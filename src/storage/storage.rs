@@ -46,6 +46,15 @@ fn storage_client() -> &'static isahc::HttpClient {
 			.tcp_keepalive(StdDuration::from_secs(20))
 			.timeout(StdDuration::from_secs(60))
 			.connect_timeout(StdDuration::from_secs(15))
+			// HTTP/1.1 вместо HTTP/2 (дефолта isahc).
+			// С HTTP/2 несколько запросов мультиплексируются по одному TCP-соединению (streams).
+			// Когда Selectel сбрасывает соединение — все streams падают одновременно,
+			// включая все попытки ретрая, если они попали в тот же слот пула.
+			// С HTTP/1.1 каждое соединение обслуживает один запрос,
+			// сбой одного не влияет на остальные, ретрай всегда открывает новое соединение.
+			// Альтернатива: перейти на object_store (Apache Arrow) — там retry/connection
+			// management реализованы правильно для объектных хранилищ.
+			.version_negotiation(isahc::config::VersionNegotiation::http11())
 			.build()
 			.expect("[saras] storage HTTP client init failed")
 	})
