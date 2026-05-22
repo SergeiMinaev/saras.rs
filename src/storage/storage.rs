@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use chrono::{Duration};
 use hmac::{Hmac, Mac};
 use isahc::http::status::StatusCode;
@@ -31,6 +32,23 @@ const TOKEN_KEY: &str = "storage_token";
 const STREAM_PROGRESS_STEP_BYTES: u64 = 100 * 1024 * 1024;
 const STREAM_PROGRESS_FIRST_BYTES: u64 = 1 * 1024 * 1024;
 const STREAM_PROGRESS_TIME_SECS: u64 = 5;
+
+// Разделяемый HTTP-клиент с пулом соединений — исключает лавину новых подключений при конкурентных чтениях
+static STORAGE_CLIENT: OnceLock<isahc::HttpClient> = OnceLock::new();
+
+fn storage_client() -> &'static isahc::HttpClient {
+	STORAGE_CLIENT.get_or_init(|| {
+		isahc::HttpClient::builder()
+			.automatic_decompression(false)
+			.max_connections(20)
+			.max_connections_per_host(8)
+			.connection_cache_size(8)
+			.timeout(StdDuration::from_secs(60))
+			.connect_timeout(StdDuration::from_secs(15))
+			.build()
+			.expect("[saras] storage HTTP client init failed")
+	})
+}
 
 
 pub async fn get_base_url() -> String {
@@ -215,111 +233,108 @@ impl Storage {
 		Ok(len)
 	}
 	pub async fn open(&self, path: &PathBuf) -> Result<Vec<u8>, Error> {
-		// If `path` is an absolute URL (starts with http:// or https://),
-		// use it directly; otherwise build the API URL based on the configured base.
 		let url = match path.to_str() {
 			Some(s) if s.starts_with("http://") || s.starts_with("https://") => s.to_string(),
 			_ => self.api_url_for(path.as_path()).await,
 		};
 
-		// Build an async client with automatic decompression turned OFF so isahc
-		// does not try to handle "br" itself (we will decode manually).
-		// NOTE: building a new HttpClient on every call is wasteful; consider
-		// reusing a single client instance stored on `Storage`.
-		let client = isahc::HttpClient::builder()
-			.automatic_decompression(false)
-			.build()
-			.map_err(|e| {
-				eprintln!(
-					"[saras][storage] open client build failed path={} err={:?}",
-					path.display(),
-					e
-				);
-				Error::Storage
-			})?;
-
-		let req = isahc::Request::builder()
-			.method("GET")
-			.uri(url.clone())
-			.header("X-Auth-Token", self.get_token().await)
-			.body(())
-			.map_err(|e| {
-				eprintln!(
-					"[saras][storage] open request build failed path={} url={} err={:?}",
-					path.display(),
-					url,
-					e
-				);
-				Error::Storage
-			})?;
-
-		let mut resp = client.send_async(req).await.map_err(|e| {
-			eprintln!(
-				"[saras][storage] open send failed path={} url={} err={:?}",
-				path.display(),
-				url,
-				e
-			);
-			Error::Storage
-		})?;
-		if resp.status() != StatusCode::OK {
-			// 404 is an expected "miss" in many call sites; avoid log spam.
-			if resp.status() != StatusCode::NOT_FOUND {
-				eprintln!(
-					"[saras][storage] open non-200 path={} url={} status={}",
-					path.display(),
-					url,
-					resp.status()
-				);
-			}
-			return Err(Error::Storage)
-		}
-
-		// Read Content-Encoding header before consuming the response body,
-		// because `into_body()` takes ownership of `resp`.
-		let is_br_header = resp.headers().get("Content-Encoding")
-			.and_then(|v| v.to_str().ok())
+		// Расширение .br определяем один раз — не зависит от попытки
+		let is_br_ext = path.extension()
+			.and_then(|e| e.to_str())
 			.map(|s| s.eq_ignore_ascii_case("br"))
 			.unwrap_or(false);
 
-		// Read the async response body into a Vec<u8>.
-		let mut body = resp.into_body();
-		let mut bytes: Vec<u8> = Vec::new();
-		futures_lite::io::AsyncReadExt::read_to_end(&mut body, &mut bytes)
-			.await
-			.map_err(|e| {
-				eprintln!(
-					"[saras][storage] open read failed path={} url={} err={:?}",
-					path.display(),
-					url,
-					e
-				);
-				Error::Storage
-			})?;
+		for attempt in 0u32..3 {
+			if attempt > 0 {
+				task::sleep(StdDuration::from_millis(200 * (1u64 << attempt))).await;
+			}
 
-		let is_br = is_br_header
-			|| path.extension()
-				.and_then(|e| e.to_str())
+			let req = isahc::Request::builder()
+				.method("GET")
+				.uri(url.clone())
+				.header("X-Auth-Token", self.get_token().await)
+				.body(())
+				.map_err(|e| {
+					eprintln!(
+						"[saras][storage] open request build failed path={} url={} err={:?}",
+						path.display(),
+						url,
+						e
+					);
+					Error::Storage
+				})?;
+
+			let mut resp = match storage_client().send_async(req).await {
+				Ok(r) => r,
+				Err(e) => {
+					eprintln!(
+						"[saras][storage] open send failed attempt={} path={} url={} err={:?}",
+						attempt + 1,
+						path.display(),
+						url,
+						e
+					);
+					continue;
+				}
+			};
+
+			if resp.status() != StatusCode::OK {
+				if resp.status() != StatusCode::NOT_FOUND {
+					eprintln!(
+						"[saras][storage] open non-200 path={} url={} status={}",
+						path.display(),
+						url,
+						resp.status()
+					);
+				}
+				return Err(Error::Storage);
+			}
+
+			let is_br_header = resp.headers().get("Content-Encoding")
+				.and_then(|v| v.to_str().ok())
 				.map(|s| s.eq_ignore_ascii_case("br"))
 				.unwrap_or(false);
 
-		if is_br {
-			let mut out: Vec<u8> = Vec::new();
-			let mut cursor = Cursor::new(bytes);
-			let mut dec = Decompressor::new(&mut cursor, 4096);
-			std::io::copy(&mut dec, &mut out).map_err(|e| {
-				eprintln!(
-					"[saras][storage] open brotli decode failed path={} url={} err={:?}",
-					path.display(),
-					url,
-					e
-				);
-				Error::Storage
-			})?;
-			Ok(out)
-		} else {
-			Ok(bytes)
+			let mut body = resp.into_body();
+			let mut bytes: Vec<u8> = Vec::new();
+			match futures_lite::io::AsyncReadExt::read_to_end(&mut body, &mut bytes).await {
+				Ok(_) => {}
+				Err(e) => {
+					eprintln!(
+						"[saras][storage] open read failed attempt={} path={} url={} err={:?}",
+						attempt + 1,
+						path.display(),
+						url,
+						e
+					);
+					continue;
+				}
+			}
+
+			if is_br_ext || is_br_header {
+				let mut out: Vec<u8> = Vec::new();
+				let mut cursor = Cursor::new(bytes);
+				let mut dec = Decompressor::new(&mut cursor, 4096);
+				return std::io::copy(&mut dec, &mut out).map_err(|e| {
+					eprintln!(
+						"[saras][storage] open brotli decode failed path={} url={} err={:?}",
+						path.display(),
+						url,
+						e
+					);
+					Error::Storage
+				}).map(|_| out);
+			} else {
+				return Ok(bytes);
+			}
 		}
+
+		eprintln!(
+			"[saras][storage] open all attempts failed path={} url={}",
+			path.display(),
+			url
+		);
+		Err(Error::Storage)
 	}
 	pub async fn ls(&self, path: &PathBuf) -> Vec<String> {
 		let raw_prefix = path.display().to_string();
