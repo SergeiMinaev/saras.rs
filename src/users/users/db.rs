@@ -187,6 +187,10 @@ impl UserDb {
 		let id = self.update(id, data).await?;
 		self.by_id(id).await
 	}
+	pub async fn touch_last_visit(&self, user_id: u32) {
+		let q = "update users_users set last_visit_at = now() where id = $1::INT";
+		Lpsql::query(q).bind(user_id as i32).exec(&self.pool).await;
+	}
 	pub async fn delete(&self, id: i32) -> bool {
 		let q = "delete from users_users where id = $1::INT";
 		Lpsql::query(q).bind(id).exec(&self.pool).await != 0

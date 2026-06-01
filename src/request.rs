@@ -14,7 +14,15 @@ impl RequestTools for Request {
 		if self.session_id != "".to_string() {
 			let pool = get_pool();
 			let userdb = UserDb::new(pool.clone());
-			return userdb.by_session_id(&self.session_id).await
+			let user = userdb.by_session_id(&self.session_id).await;
+			if let Some(ref u) = user {
+				let user_id = u.id;
+				let pool2 = pool.clone();
+				smol::spawn(async move {
+					UserDb::new(pool2).touch_last_visit(user_id).await;
+				}).detach();
+			}
+			return user;
 		} else { return None }
 	}
 	async fn is_su(&self) -> bool {
