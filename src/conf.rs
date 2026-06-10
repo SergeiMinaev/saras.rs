@@ -42,6 +42,11 @@ pub struct LegalDocsConf {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct GeoVisitsConf {
+	pub token: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct Conf {
     pub socket_path: String,
     pub is_dev: bool,
@@ -66,6 +71,7 @@ pub struct Conf {
 	pub smtp_pwd: String,
 
 	pub legal_docs: LegalDocsConf,
+	pub geo_visits: Option<GeoVisitsConf>,
 }
 
 fn default_img_shrink_quality_mode() -> String {

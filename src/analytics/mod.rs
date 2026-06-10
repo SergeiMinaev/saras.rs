@@ -1,4 +1,5 @@
 pub mod api;
+pub mod geo_visits;
 pub mod worker;
 
 use async_channel::{bounded, Receiver, Sender};
