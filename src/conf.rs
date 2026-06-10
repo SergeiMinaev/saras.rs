@@ -44,6 +44,8 @@ pub struct LegalDocsConf {
 #[derive(Debug, Deserialize)]
 pub struct GeoVisitsConf {
 	pub token: String,
+	#[serde(default)]
+	pub debug: bool,
 }
 
 #[derive(Debug, Deserialize)]

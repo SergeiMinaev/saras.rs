@@ -22,9 +22,17 @@ pub async fn run(rx: Receiver<VisitRecord>) {
     }
 }
 
+fn is_debug() -> bool {
+    let conf = CONF.try_read();
+    conf.map(|c| c.geo_visits.as_ref().map(|g| g.debug).unwrap_or(false)).unwrap_or(false)
+}
+
 async fn process(record: VisitRecord) {
     if record.ip.is_empty() {
         return;
+    }
+    if is_debug() {
+        println!("geo_visits: process ip={}", record.ip);
     }
     let prefix = ip_to_prefix(&record.ip);
     let cached = db::get_cached_prefix(&prefix).await;
@@ -68,23 +76,53 @@ struct GeoResult {
 }
 
 async fn lookup(ip: &str) -> Option<GeoResult> {
-    let token = {
+    let (token, debug) = {
         let conf = CONF.read().await;
-        conf.geo_visits.as_ref()?.token.clone()
+        let gv = conf.geo_visits.as_ref()?;
+        (gv.token.clone(), gv.debug)
     };
     let url = format!("https://api.2ip.io/{}?token={}", ip, token);
-    let mut resp = isahc::get_async(&url).await.ok()?;
+    if debug {
+        println!("geo_visits: lookup url={}", url);
+    }
+    let mut resp = match isahc::get_async(&url).await {
+        Ok(r) => r,
+        Err(e) => {
+            if debug {
+                println!("geo_visits: http error for {}: {:?}", ip, e);
+            }
+            return None;
+        }
+    };
     if !resp.status().is_success() {
+        if debug {
+            println!("geo_visits: non-200 for {}: {}", ip, resp.status());
+        }
         return None;
     }
-    let body = resp.text().await.ok()?;
-    let parsed: TwoIpResponse = serde_json::from_str(&body).ok()?;
-    let lat = parsed.lat.as_deref().and_then(|s| s.parse::<f64>().ok());
-    let lon = parsed.lon.as_deref().and_then(|s| s.parse::<f64>().ok());
-    Some(GeoResult {
-        lat,
-        lon,
-        country: parsed.country,
-        city: parsed.city,
-    })
+    let body = match resp.text().await {
+        Ok(b) => b,
+        Err(e) => {
+            if debug {
+                println!("geo_visits: read body error for {}: {:?}", ip, e);
+            }
+            return None;
+        }
+    };
+    match serde_json::from_str::<TwoIpResponse>(&body) {
+        Ok(parsed) => {
+            let lat = parsed.lat.as_deref().and_then(|s| s.parse::<f64>().ok());
+            let lon = parsed.lon.as_deref().and_then(|s| s.parse::<f64>().ok());
+            if debug {
+                println!("geo_visits: lookup ok ip={} lat={:?} lon={:?}", ip, lat, lon);
+            }
+            Some(GeoResult { lat, lon, country: parsed.country, city: parsed.city })
+        }
+        Err(e) => {
+            if debug {
+                println!("geo_visits: json error for {}: {:?} body={}", ip, e, &body[..body.len().min(300)]);
+            }
+            None
+        }
+    }
 }
