@@ -116,7 +116,7 @@ async fn lookup(ip: &str) -> Option<GeoResult> {
             if debug {
                 println!("geo_visits: lookup ok ip={} lat={:?} lon={:?}", ip, lat, lon);
             }
-            Some(GeoResult { lat, lon, country: parsed.country, city: parsed.city })
+            Some(GeoResult { lat, lon, country: parsed.code, city: parsed.city })
         }
         Err(e) => {
             if debug {
