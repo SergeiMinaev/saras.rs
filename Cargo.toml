@@ -2,7 +2,7 @@
 name = "saras"
 description = "Simple Async Rust Application Server"
 authors = ["Sergei Minaev <i@zenux.ru>"]
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 
 [[bin]]
