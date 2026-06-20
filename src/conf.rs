@@ -72,6 +72,9 @@ pub struct Conf {
 	pub smtp_login: String,
 	pub smtp_pwd: String,
 
+	#[serde(default)]
+	pub site_name: String,
+
 	pub legal_docs: LegalDocsConf,
 	pub geo_visits: Option<GeoVisitsConf>,
 }

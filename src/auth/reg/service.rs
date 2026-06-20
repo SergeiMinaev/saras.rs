@@ -88,10 +88,12 @@ pub async fn send_code(email: &str, sess_id: &str) -> String {
 }
 
 pub async fn send_code_email(email: &str, code: &str) {
-	let subject = "Код подтверждения endlesstrails.ru";
+	let conf = crate::conf::CONF.read().await;
+	let subject = format!("Код подтверждения {}", conf.site_name);
+	drop(conf);
 	let body = format!("Ваш код подтверждения: {code}");
 	debug!("go send mail");
-	match send_plain_email(email, subject, &body).await {
+	match send_plain_email(email, &subject, &body).await {
 		Ok(_) => println!("Письмо отправлено!"),
 		Err(e) => eprintln!("Ошибка: {e}"),
 	}
