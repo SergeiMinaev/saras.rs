@@ -64,6 +64,8 @@ pub struct Conf {
 	pub selectel: SelectelConf,
 
 	pub vk_auth_url: String,
+	#[serde(default)]
+	pub vk_client_id: String,
 	pub ya_auth_url: String,
 	pub ya_auth_client_id: String,
 	pub ya_auth_client_secret: String,
