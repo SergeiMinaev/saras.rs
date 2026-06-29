@@ -51,7 +51,8 @@ pub async fn get_docs(_req: Request) -> Resp {
     let pool = get_pool();
     let docdb = DocDb::new(pool.clone());
     docdb.total_count().await;
-    let r = docdb.page(0, 50).await;
+    let (sort_by, sort_dir) = crate::admin::sort::from_req(&_req);
+    let r = docdb.page(0, 50, sort_by.as_deref(), sort_dir.as_deref()).await;
     JsonResp::ok("").content(&r).to_http()
 }
 

@@ -8,18 +8,28 @@ pub struct DocDb {
     pool: Arc<ConnectionPool>,
 }
 
+pub const SORTABLE_FIELDS: &[&str] = &["id", "key", "title", "version", "is_active"];
+const DEFAULT_ORDER: &str = "id";
+
 impl DocDb {
     pub fn new(pool: Arc<ConnectionPool>) -> Self {
         DocDb { pool }
     }
 
-    pub async fn page(&self, offset: i32, size: i32) -> Vec<Doc> {
-        let q = "select row_to_json(data) from (
+    pub async fn page(
+        &self,
+        offset: i32,
+        size: i32,
+        sort_by: Option<&str>,
+        sort_dir: Option<&str>,
+    ) -> Vec<Doc> {
+        let order_clause = crate::admin::sort::order_by_clause(sort_by, sort_dir, SORTABLE_FIELDS, DEFAULT_ORDER);
+        let q = format!("select row_to_json(data) from (
             select id, key, title as label, title, html, version, is_active
             from legal_docs_docs
-            order by id offset $1::INT limit $2::INT
-        ) data";
-        let items = Lpsql::query(q).bind(offset).bind(size).fetch_all(&self.pool).await;
+            {order_clause} offset $1::INT limit $2::INT
+        ) data");
+        let items = Lpsql::query(&q).bind(offset).bind(size).fetch_all(&self.pool).await;
         items.into_iter().map(|json| serde_json::from_str(&json).unwrap()).collect()
     }
 

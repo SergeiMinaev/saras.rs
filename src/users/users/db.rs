@@ -19,6 +19,9 @@ pub struct UserDb {
 	pool: Arc<ConnectionPool>,
 }
 
+pub const SORTABLE_FIELDS: &[&str] = &["id", "email", "name", "is_superuser", "created_at"];
+const DEFAULT_ORDER: &str = "id";
+
 impl UserDb {
 	pub fn new(pool: Arc<ConnectionPool>) -> Self {
 		UserDb { pool }
@@ -95,8 +98,15 @@ impl UserDb {
 		Lpsql::query(q).bind(email).fetch_one(&self.pool).await
 			.and_then(|v| serde_json::from_str(&v).ok())
 	}
-	pub async fn page(&self, offset: i32, size: i32) -> Vec<User> {
-		let q = "select row_to_json(data) from (
+	pub async fn page(
+		&self,
+		offset: i32,
+		size: i32,
+		sort_by: Option<&str>,
+		sort_dir: Option<&str>,
+	) -> Vec<User> {
+		let order_clause = crate::admin::sort::order_by_clause(sort_by, sort_dir, SORTABLE_FIELDS, DEFAULT_ORDER);
+		let q = format!("select row_to_json(data) from (
 			select id, email, email as label, name, hash, is_superuser,
 			case when users.avatar is not null then
 				json_build_object('path', users.avatar)
@@ -107,13 +117,21 @@ impl UserDb {
 			to_char(users.created_at at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') as created_at,
 			to_char(users.updated_at at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') as updated_at
 			from users_users as users
-			order by id offset $1::INT limit $2::INT
-		) data";
-		let items = Lpsql::query(q).bind(offset).bind(size).fetch_all(&self.pool).await;
+			{order_clause} offset $1::INT limit $2::INT
+		) data");
+		let items = Lpsql::query(&q).bind(offset).bind(size).fetch_all(&self.pool).await;
 		items.into_iter().map(|json| serde_json::from_str(&json).unwrap()).collect()
 	}
-	pub async fn page_by_name(&self, offset: i32, size: i32, query: &str) -> Vec<User> {
-		let q = "select row_to_json(data) from (
+	pub async fn page_by_name(
+		&self,
+		offset: i32,
+		size: i32,
+		query: &str,
+		sort_by: Option<&str>,
+		sort_dir: Option<&str>,
+	) -> Vec<User> {
+		let order_clause = crate::admin::sort::order_by_clause(sort_by, sort_dir, SORTABLE_FIELDS, DEFAULT_ORDER);
+		let q = format!("select row_to_json(data) from (
 			select id, email, email as label, name, hash, is_superuser,
 			case when users.avatar is not null then
 				json_build_object('path', users.avatar)
@@ -125,10 +143,10 @@ impl UserDb {
 			to_char(users.updated_at at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') as updated_at
 			from users_users as users
 			where coalesce(name, '') ilike $3::TEXT
-			order by id offset $1::INT limit $2::INT
-		) data";
+			{order_clause} offset $1::INT limit $2::INT
+		) data");
 		let pattern = format!("%{}%", query);
-		let items = Lpsql::query(q)
+		let items = Lpsql::query(&q)
 			.bind(offset)
 			.bind(size)
 			.bind(pattern)

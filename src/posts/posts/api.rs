@@ -54,7 +54,8 @@ pub async fn get_posts(_req: Request) -> Resp {
 	let pool = get_pool();
 	let postdb = PostDb::new(pool.clone());
 	postdb.total_count().await;
-	let r = postdb.page(0,20).await;
+	let (sort_by, sort_dir) = crate::admin::sort::from_req(&_req);
+	let r = postdb.page(0, 20, sort_by.as_deref(), sort_dir.as_deref()).await;
 	return JsonResp::ok("").content(&r).to_http()
 }
 

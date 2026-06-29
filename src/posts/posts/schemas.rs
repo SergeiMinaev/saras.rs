@@ -13,6 +13,7 @@ pub fn admin_schemas() -> Value {
 	"meta": model_meta::<Post>(),
 	"admin": {
 		"list_fields": ["id", "title", "text"],
+		"sortable_fields": crate::posts::posts::db::SORTABLE_FIELDS,
 		"item_fields": ["id", "title", "text"],
 	},
 	"schemas": {

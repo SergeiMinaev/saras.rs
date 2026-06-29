@@ -12,17 +12,27 @@ pub struct PostDb {
 }
 
 
+pub const SORTABLE_FIELDS: &[&str] = &["id", "title"];
+const DEFAULT_ORDER: &str = "id";
+
 impl PostDb {
 	pub fn new(pool: Arc<ConnectionPool>) -> Self {
 		PostDb { pool }
 	}
-	pub async fn page(&self, offset: i32, size: i32) -> Vec<Post> {
-		let q = "select row_to_json(data) from (
+	pub async fn page(
+		&self,
+		offset: i32,
+		size: i32,
+		sort_by: Option<&str>,
+		sort_dir: Option<&str>,
+	) -> Vec<Post> {
+		let order_clause = crate::admin::sort::order_by_clause(sort_by, sort_dir, SORTABLE_FIELDS, DEFAULT_ORDER);
+		let q = format!("select row_to_json(data) from (
 			select id, title as label, title, text
 			from posts_posts as art
-			order by id offset $1::INT limit $2::INT
-		) data";
-		let items = Lpsql::query(q).bind(offset).bind(size).fetch_all(&self.pool).await;
+			{order_clause} offset $1::INT limit $2::INT
+		) data");
+		let items = Lpsql::query(&q).bind(offset).bind(size).fetch_all(&self.pool).await;
 		items.into_iter().map(|json| serde_json::from_str(&json).unwrap()).collect()
 	}
 	pub async fn by_id(&self, id: i32) -> Option<Post> {

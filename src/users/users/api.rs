@@ -68,6 +68,7 @@ pub async fn get_users(_req: Request) -> Resp {
 		.unwrap_or(20);
 	let offset = ((page - 1) * size) as i32;
 	let limit = size as i32;
+	let (sort_by, sort_dir) = crate::admin::sort::from_req(&_req);
 	let q = _req
 		.query
 		.get("q")
@@ -77,12 +78,12 @@ pub async fn get_users(_req: Request) -> Resp {
 
 	let (users, total) = if let Some(query) = q {
 		(
-			userdb.page_by_name(offset, limit, &query).await,
+			userdb.page_by_name(offset, limit, &query, sort_by.as_deref(), sort_dir.as_deref()).await,
 			userdb.total_count_by_name(&query).await,
 		)
 	} else {
 		(
-			userdb.page(offset, limit).await,
+			userdb.page(offset, limit, sort_by.as_deref(), sort_dir.as_deref()).await,
 			userdb.total_count().await,
 		)
 	};

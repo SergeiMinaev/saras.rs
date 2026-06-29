@@ -12,6 +12,7 @@ pub fn admin_schemas() -> Value {
         "meta": model_meta::<Doc>(),
         "admin": {
             "list_fields": ["id", "key", "title", "version", "is_active"],
+            "sortable_fields": crate::legal_docs::docs::db::SORTABLE_FIELDS,
             "item_fields": ["id", "key", "title", "html", "version", "is_active"],
         },
         "schemas": {
