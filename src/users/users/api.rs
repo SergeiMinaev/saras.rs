@@ -103,8 +103,37 @@ pub async fn get_users(_req: Request) -> Resp {
 		prev_page: if page > 1 { Some(page - 1) } else { None },
 	};
 
+	// Обогащаем список флагом согласия текущей версии (для админ-колонки).
+	let (consent_key, consent_version) = {
+		let conf = crate::conf::CONF.read().await;
+		(
+			conf.legal_docs.consent_key.clone(),
+			conf.legal_docs.consent_version.clone(),
+		)
+	};
+	let mut items = serde_json::to_value(&users).unwrap_or_else(|_| json!([]));
+	if let Some(arr) = items.as_array_mut() {
+		let ids: Vec<i32> = arr
+			.iter()
+			.filter_map(|u| u.get("id").and_then(|v| v.as_i64()))
+			.map(|n| n as i32)
+			.collect();
+		let consented =
+			crate::legal_docs::consents::consented_user_ids(&consent_key, &consent_version, &ids).await;
+		for u in arr.iter_mut() {
+			let has = u
+				.get("id")
+				.and_then(|v| v.as_i64())
+				.map(|n| consented.contains(&(n as i32)))
+				.unwrap_or(false);
+			if let Some(obj) = u.as_object_mut() {
+				obj.insert("consent".to_string(), serde_json::Value::Bool(has));
+			}
+		}
+	}
+
 	let mut resp = JsonResp::ok("");
-	resp.content(&users);
+	resp.content(&items);
 	resp.pagination(pagination);
 	resp.to_http()
 }
