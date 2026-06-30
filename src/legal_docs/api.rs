@@ -2,8 +2,27 @@ use crate::conf::CONF;
 use crate::errors::Error;
 use crate::http::{not_found, JsonResp, Request, Resp};
 use crate::legal_docs::consents;
+use crate::legal_docs::files;
 use crate::request::RequestTools;
-use serde_json::Value;
+use serde_json::{json, Value};
+
+/// Отдаёт юр-документ из файла (`<legal_dir>/<key>.html` + заголовок из manifest).
+/// Поле `id` - для совместимости с фронтом (ContentBlockPage проверяет `data.id`).
+pub async fn doc_by_key(req: Request) -> Resp {
+    let Some(key) = req.route.get("key").cloned() else {
+        return not_found();
+    };
+    let (Some(title), Some(html)) = (files::doc_title(&key).await, files::doc_html(&key).await) else {
+        return not_found();
+    };
+    let r = json!({
+        "id": key,
+        "key": key,
+        "title": title,
+        "html": html,
+    });
+    JsonResp::ok("").content(&r).to_http()
+}
 
 const ALLOWED_SOURCES: [&str; 2] = ["web", "app"];
 

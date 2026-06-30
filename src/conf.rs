@@ -39,6 +39,13 @@ pub struct SelectelConf {
 pub struct LegalDocsConf {
 	pub consent_key: String,
 	pub consent_version: String,
+	// Каталог с юр-документами относительно static_dir (у каждого приложения свой).
+	#[serde(default = "default_legal_dir")]
+	pub dir: String,
+}
+
+fn default_legal_dir() -> String {
+	"legal".to_string()
 }
 
 #[derive(Debug, Deserialize)]
