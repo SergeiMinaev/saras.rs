@@ -202,9 +202,10 @@ pub async fn finish_reg(form: &RegForm, req: &Request, email: &str) -> Resp {
 				.to_http()
 		}
 	};
-	smol::spawn(async move {
-		let _ = update_default_avatar(user_id).await;
-	}).detach();
+	// Дожидаемся генерации дефолтной аватарки до ответа: клиент логинится сразу
+	// после регистрации, и detached-фон давал гонку — первый /api/user приходил
+	// без аватарки, клиенты кэшировали юзера без неё.
+	let _ = update_default_avatar(user_id).await;
 	let consent_key = {
 		let conf = CONF.read().await;
 		conf.legal_docs.consent_key.clone()
