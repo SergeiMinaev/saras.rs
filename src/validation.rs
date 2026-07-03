@@ -115,47 +115,13 @@ pub fn parse_deser_error(e: serde_path_to_error::Error<serde_json::Error>) -> Va
 }
 
 
+// Требование к паролю — только минимальная длина (12 символов). Композиционные
+// правила (обязательные регистры/цифры) сознательно убраны по NIST SP 800-63B:
+// они дают предсказуемые пароли и запрещают стойкие парольные фразы.
+// Длина — в символах, не в байтах (иначе кириллица считалась бы вдвое длиннее).
 pub fn validate_pwd(pwd: &str) -> Result<(), ValidationError> {
-	/// Password requirements: >= 12 chars, at least one uppercase, lowercase and a digit.
-    if pwd.len() < 12 {
-		return Err(ValidationError::new("Пароль не должен быть короче 12 символов."))
+    if pwd.chars().count() < 12 {
+        return Err(ValidationError::new("Пароль не должен быть короче 12 символов."));
     }
-
-    let mut has_lowercase = false;
-    for char in pwd.chars() {
-        if char.is_lowercase() {
-            has_lowercase = true;
-            break;
-        }
-    }
-    if !has_lowercase {
-		return Err(
-			ValidationError::new("Пароль должен содержать хотя бы одну букву в нижнем регистре.")
-		)
-    }
-
-    let mut has_uppercase = false;
-    for char in pwd.chars() {
-        if char.is_uppercase() {
-            has_uppercase = true;
-            break;
-        }
-    }
-    if !has_uppercase {
-		return Err(
-			ValidationError::new("Пароль должен содержать хотя бы одну букву в верхнем регистре.")
-		)
-    }
-
-    let mut has_digit = false;
-    for char in pwd.chars() {
-        if char.is_numeric() {
-            has_digit = true;
-            break;
-        }
-    }
-    if !has_digit {
-		return Err(ValidationError::new("Пароль должен содержать хотя бы одну цифру."))
-    }
-	Ok(())
+    Ok(())
 }
