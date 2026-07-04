@@ -9,6 +9,21 @@ pub trait RequestTools {
 	fn is_su(&self) -> impl std::future::Future<Output = bool> + Send;
 }
 
+/// IP клиента: `X-Real-IP`, затем первый адрес из `X-Forwarded-For`.
+/// Пустая строка, если ничего не пришло (за прокси заголовок ставит фронт-сервер).
+pub fn client_ip(req: &Request) -> String {
+	req.headers
+		.get("x-real-ip")
+		.cloned()
+		.or_else(|| {
+			req.headers
+				.get("x-forwarded-for")
+				.and_then(|v| v.split(',').next().map(|s| s.trim().to_string()))
+		})
+		.filter(|v| !v.is_empty())
+		.unwrap_or_default()
+}
+
 impl RequestTools for Request {
 	async fn get_user(&self) -> Option<users::models::User> {
 		if self.session_id != "".to_string() {

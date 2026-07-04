@@ -16,9 +16,11 @@ struct GeoPoint {
     count_authed: i64,
 }
 
-pub async fn geo_visits(_req: Request) -> Resp {
+pub async fn geo_visits(req: Request) -> Resp {
     let pool = get_pool();
-    let q = "SELECT row_to_json(data) FROM (
+    let range_cond = super::super::range_ts_cond(req.query.get("range"), "v.ts");
+    let q = format!(
+        "SELECT row_to_json(data) FROM (
         SELECT
             c.lat,
             c.lon,
@@ -29,12 +31,13 @@ pub async fn geo_visits(_req: Request) -> Resp {
             COUNT(*) FILTER (WHERE v.is_authed) AS count_authed
         FROM geo_visits v
         JOIN geo_prefix_cache c ON c.prefix = v.prefix
-        WHERE v.ts > now() - interval '30 days'
+        WHERE {range_cond}
           AND c.lat IS NOT NULL
         GROUP BY c.lat, c.lon, c.city, c.country
         ORDER BY unique_visitors DESC
-    ) data";
-    let rows = Lpsql::query(q).fetch_all(&pool).await;
+    ) data"
+    );
+    let rows = Lpsql::query(&q).fetch_all(&pool).await;
     let points: Vec<Value> = rows
         .iter()
         .filter_map(|r| serde_json::from_str::<GeoPoint>(r).ok())
