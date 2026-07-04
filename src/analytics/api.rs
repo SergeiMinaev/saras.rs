@@ -33,6 +33,7 @@ pub async fn analytics(_req: Request) -> Resp {
             COUNT(DISTINCT ip) AS total_uniq
         FROM analytics_hits
         GROUP BY section
+        HAVING COUNT(*) >= 3
         ORDER BY total DESC
     ) data";
     let rows = Lpsql::query(q).fetch_all(&pool).await;
