@@ -5,6 +5,9 @@ pub mod worker;
 use async_channel::{bounded, Receiver, Sender};
 use once_cell::sync::OnceCell;
 
+use crate::http::Request;
+use crate::request::client_ip;
+
 pub struct RefRecord {
     pub host: String,
     pub ip: String,
@@ -21,6 +24,24 @@ pub fn init() -> Receiver<RefRecord> {
 pub fn track(host: String, ip: String) {
     let Some(tx) = SENDER.get() else { return };
     let _ = tx.try_send(RefRecord { host, ip });
+}
+
+/// Учитывает внешний источник перехода из заголовка `Referer` запроса-документа.
+/// Свой домен (по `req.host`, без `www.`) и прямые заходы (реферера нет)
+/// пропускает. Generic — зовётся из index-хендлера любого проекта.
+pub fn track_from_request(req: &Request) {
+    let Some(referer) = req.headers.get("referer") else {
+        return;
+    };
+    let Some(host) = host_from_referrer(referer) else {
+        return;
+    };
+    let own = req.host.strip_prefix("www.").unwrap_or(&req.host);
+    let ref_host = host.strip_prefix("www.").unwrap_or(&host);
+    if ref_host == own {
+        return;
+    }
+    track(host, client_ip(req));
 }
 
 /// Извлекает хост из значения `document.referrer` / заголовка `Referer`.

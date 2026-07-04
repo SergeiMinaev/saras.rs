@@ -3,36 +3,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::db::get_pool;
-use crate::http::{not_found, JsonResp, Request, Resp};
-
-/// Приём «маячка» с внешним источником перехода. Фронт присылает
-/// `document.referrer`; хост извлекаем и фильтруем на сервере, путь/query
-/// отбрасываем. Ответ всегда ok - это fire-and-forget с клиента.
-pub async fn record(req: Request) -> Resp {
-    if req.method.to_lowercase() != "post" {
-        return not_found();
-    }
-
-    let body: Value = serde_json::from_str(&req.body_string).unwrap_or(Value::Null);
-    let referrer = body.get("referrer").and_then(|v| v.as_str()).unwrap_or("");
-
-    if let Some(host) = super::host_from_referrer(referrer) {
-        let ip = req
-            .headers
-            .get("x-real-ip")
-            .cloned()
-            .or_else(|| {
-                req.headers
-                    .get("x-forwarded-for")
-                    .and_then(|v| v.split(',').next().map(|s| s.trim().to_string()))
-            })
-            .filter(|v| !v.is_empty())
-            .unwrap_or_default();
-        super::track(host, ip);
-    }
-
-    JsonResp::ok("").to_http()
-}
+use crate::http::{JsonResp, Request, Resp};
 
 #[derive(Deserialize)]
 struct HostRow {
