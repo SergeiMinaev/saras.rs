@@ -23,6 +23,8 @@ pub fn init() -> Receiver<HitRecord> {
 
 pub fn record(ip: &str, path: &str) {
     let Some(tx) = SENDER.get() else { return };
+    // Query-строку не храним: и путь, и секция — без `?...`.
+    let path = path.split('?').next().unwrap_or(path);
     let _ = tx.try_send(HitRecord {
         ip: ip.to_string(),
         path: path.to_string(),
