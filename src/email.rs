@@ -5,6 +5,10 @@ use lettre::transport::smtp::authentication::Credentials;
 
 pub async fn send_plain_email(to: &str, subject: &str, body: &str) -> Result<(), String> {
 	let conf = CONF.read().await;
+	if conf.smtp_fake {
+		println!("=== FAKE EMAIL ===\nTo: {to}\nSubject: {subject}\n\n{body}\n==================");
+		return Ok(());
+	}
 	let msg = Message::builder()
 		.from(conf.smtp_login.parse::<Mailbox>().map_err(|e| e.to_string())?)
 		.to(to.parse::<Mailbox>().map_err(|e| e.to_string())?)

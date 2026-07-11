@@ -80,6 +80,9 @@ pub struct Conf {
 	pub smtp_server: String,
 	pub smtp_login: String,
 	pub smtp_pwd: String,
+	// Фейковая отправка (для dev): письмо не уходит на SMTP, а печатается в stdout.
+	#[serde(default)]
+	pub smtp_fake: bool,
 
 	#[serde(default)]
 	pub site_name: String,
