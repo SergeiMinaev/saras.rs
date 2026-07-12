@@ -34,10 +34,10 @@ impl UserDb {
 		let q = "select count(*) from users_users";
 		Lpsql::query(q).fetch_one(&self.pool).await.unwrap().parse().unwrap()
 	}
-	pub async fn total_count_by_name(&self, query: &str) -> i32 {
+	pub async fn total_count_by_query(&self, query: &str) -> i32 {
 		let q = "select count(*)
 			from users_users
-			where coalesce(name, '') ilike $1::TEXT";
+			where (coalesce(name, '') ilike $1::TEXT or coalesce(email, '') ilike $1::TEXT)";
 		let pattern = format!("%{}%", query);
 		Lpsql::query(q)
 			.bind(pattern)
@@ -122,7 +122,7 @@ impl UserDb {
 		let items = Lpsql::query(&q).bind(offset).bind(size).fetch_all(&self.pool).await;
 		items.into_iter().map(|json| serde_json::from_str(&json).unwrap()).collect()
 	}
-	pub async fn page_by_name(
+	pub async fn page_by_query(
 		&self,
 		offset: i32,
 		size: i32,
@@ -142,7 +142,7 @@ impl UserDb {
 			to_char(users.created_at at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') as created_at,
 			to_char(users.updated_at at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') as updated_at
 			from users_users as users
-			where coalesce(name, '') ilike $3::TEXT
+			where (coalesce(name, '') ilike $3::TEXT or coalesce(email, '') ilike $3::TEXT)
 			{order_clause} offset $1::INT limit $2::INT
 		) data");
 		let pattern = format!("%{}%", query);

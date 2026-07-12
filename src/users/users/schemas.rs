@@ -22,6 +22,7 @@ pub fn admin_schemas() -> Value {
 	"meta": model_meta::<User>(),
 	"admin": {
 		"list_fields": ["id", "email", "name", "avatar", "is_superuser", "created_at", "consent"],
+		"filters": ["q"],
 		"sortable_fields": crate::users::users::db::SORTABLE_FIELDS,
 		"labels": { "consent": "Согласие" },
 		"item_fields": ["id", "email", "name", "avatar", "is_superuser"],

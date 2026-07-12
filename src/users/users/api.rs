@@ -78,8 +78,8 @@ pub async fn get_users(_req: Request) -> Resp {
 
 	let (users, total) = if let Some(query) = q {
 		(
-			userdb.page_by_name(offset, limit, &query, sort_by.as_deref(), sort_dir.as_deref()).await,
-			userdb.total_count_by_name(&query).await,
+			userdb.page_by_query(offset, limit, &query, sort_by.as_deref(), sort_dir.as_deref()).await,
+			userdb.total_count_by_query(&query).await,
 		)
 	} else {
 		(
