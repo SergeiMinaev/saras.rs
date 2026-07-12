@@ -22,6 +22,46 @@ pub struct UserDb {
 pub const SORTABLE_FIELDS: &[&str] = &["id", "email", "name", "is_superuser", "created_at"];
 const DEFAULT_ORDER: &str = "id";
 
+// Колонки поиска по подстроке. Добавить поле в поиск = дополнить список.
+const SEARCH_COLS: &[&str] = &["users.name", "users.email"];
+
+// JSON-проекция пользователя. Раньше дублировалась в каждой выборке — теперь
+// объявлена один раз; набор и порядок полей меняются только здесь.
+const USER_COLS: &str = "\
+	users.id, users.email, users.email as label, users.name, users.hash, users.is_superuser,
+	case when users.avatar is not null
+		then json_build_object('path', users.avatar) else null end as avatar,
+	case when users.default_avatar is not null
+		then json_build_object('path', users.default_avatar) else null end as default_avatar,
+	to_char(users.created_at at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') as created_at,
+	to_char(users.updated_at at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') as updated_at";
+
+// Начало любой выборки пользователя: обёртка row_to_json + проекция + from.
+// Хвост (join/where/order/limit) и закрывающую ") data" дописывает вызывающий код.
+fn select_users() -> Lpsql {
+	let mut q = Lpsql::builder();
+	q.push("select row_to_json(data) from ( select ")
+		.push(USER_COLS)
+		.push(" from users_users as users");
+	q
+}
+
+// Условие поиска, если запрос задан. Значение (%term%) идёт только в push_bind;
+// в format! попадают лишь имена колонок из SEARCH_COLS.
+fn apply_search(q: &mut Lpsql, search: Option<&str>) {
+	let Some(term) = search else { return };
+	q.push(" where (");
+	for (i, col) in SEARCH_COLS.iter().enumerate() {
+		if i > 0 {
+			q.push(" or ");
+		}
+		q.push(&format!("coalesce({col}, '') ilike "));
+		q.push_bind(format!("%{term}%"));
+		q.push("::text");
+	}
+	q.push(")");
+}
+
 impl UserDb {
 	pub fn new(pool: Arc<ConnectionPool>) -> Self {
 		UserDb { pool }
@@ -30,128 +70,51 @@ impl UserDb {
 		let q = "select pg_sleep(3)";
 		Lpsql::query(q).exec(&self.pool).await;
 	}
-	pub async fn total_count(&self) -> i32 {
-		let q = "select count(*) from users_users";
-		Lpsql::query(q).fetch_one(&self.pool).await.unwrap().parse().unwrap()
-	}
-	pub async fn total_count_by_query(&self, query: &str) -> i32 {
-		let q = "select count(*)
-			from users_users
-			where (coalesce(name, '') ilike $1::TEXT or coalesce(email, '') ilike $1::TEXT)";
-		let pattern = format!("%{}%", query);
-		Lpsql::query(q)
-			.bind(pattern)
-			.fetch_one(&self.pool)
-			.await
-			.unwrap()
-			.parse()
-			.unwrap()
+	pub async fn total_count(&self, search: Option<&str>) -> i32 {
+		let mut q = Lpsql::builder();
+		q.push("select count(*) from users_users as users");
+		apply_search(&mut q, search);
+		q.fetch_one(&self.pool).await.unwrap().parse().unwrap()
 	}
 	pub async fn by_session_id(&self, sess_id: &str) -> Option<User> {
-		let q = "select row_to_json(data) from (\
-			select users.id, email as label, email, name, hash, is_superuser,
-			case when users.avatar is not null then
-				json_build_object('path', users.avatar)
-			else null end as avatar,
-			case when users.default_avatar is not null then
-				json_build_object('path', users.default_avatar)
-			else null end as default_avatar,
-			to_char(users.created_at at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') as created_at,
-			to_char(users.updated_at at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') as updated_at
-			from users_users as users join auth_sessions as session \
-			on users.id = session.user_id where session.id = $1::BYTEA \
-			and session.expires > now()
-		) data";
-		Lpsql::query(q).bind(sess_id).fetch_one(&self.pool).await
+		let mut q = select_users();
+		q.push(" join auth_sessions as session on users.id = session.user_id where session.id = ")
+			.push_bind(sess_id)
+			.push("::bytea and session.expires > now() ) data");
+		q.fetch_one(&self.pool).await
 			.and_then(|v| serde_json::from_str(&v).ok())
 	}
 	pub async fn by_id(&self, id: i32) -> Option<User> {
-		let q = "select row_to_json(data) from (
-			select id, email as label, email, name, hash, is_superuser,
-			case when users.avatar is not null then
-				json_build_object('path', users.avatar)
-			else null end as avatar,
-			case when users.default_avatar is not null then
-				json_build_object('path', users.default_avatar)
-			else null end as default_avatar,
-			to_char(users.created_at at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') as created_at,
-			to_char(users.updated_at at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') as updated_at
-			from users_users as users where id = $1::INT
-		) data";
-		Lpsql::query(q).bind(id).fetch_one(&self.pool).await
+		let mut q = select_users();
+		q.push(" where users.id = ").push_bind(id).push("::int ) data");
+		q.fetch_one(&self.pool).await
 			.and_then(|v| serde_json::from_str(&v).ok())
 	}
 	pub async fn by_email(&self, email: &str) -> Option<User> {
-		let email = normalize_email(email);
-		let q = "select row_to_json(data) from (
-			select id, email as label, email, name, hash, is_superuser,
-			case when users.avatar is not null then
-				json_build_object('path', users.avatar)
-			else null end as avatar,
-			case when users.default_avatar is not null then
-				json_build_object('path', users.default_avatar)
-			else null end as default_avatar,
-			to_char(users.created_at at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') as created_at,
-			to_char(users.updated_at at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') as updated_at
-			from users_users as users where lower(btrim(email)) = $1::TEXT
-		) data";
-		Lpsql::query(q).bind(email).fetch_one(&self.pool).await
+		let mut q = select_users();
+		q.push(" where lower(btrim(users.email)) = ")
+			.push_bind(normalize_email(email))
+			.push("::text ) data");
+		q.fetch_one(&self.pool).await
 			.and_then(|v| serde_json::from_str(&v).ok())
 	}
 	pub async fn page(
 		&self,
 		offset: i32,
 		size: i32,
+		search: Option<&str>,
 		sort_by: Option<&str>,
 		sort_dir: Option<&str>,
 	) -> Vec<User> {
 		let order_clause = crate::admin::sort::order_by_clause(sort_by, sort_dir, SORTABLE_FIELDS, DEFAULT_ORDER);
-		let q = format!("select row_to_json(data) from (
-			select id, email, email as label, name, hash, is_superuser,
-			case when users.avatar is not null then
-				json_build_object('path', users.avatar)
-			else null end as avatar,
-			case when users.default_avatar is not null then
-				json_build_object('path', users.default_avatar)
-			else null end as default_avatar,
-			to_char(users.created_at at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') as created_at,
-			to_char(users.updated_at at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') as updated_at
-			from users_users as users
-			{order_clause} offset $1::INT limit $2::INT
-		) data");
-		let items = Lpsql::query(&q).bind(offset).bind(size).fetch_all(&self.pool).await;
-		items.into_iter().map(|json| serde_json::from_str(&json).unwrap()).collect()
-	}
-	pub async fn page_by_query(
-		&self,
-		offset: i32,
-		size: i32,
-		query: &str,
-		sort_by: Option<&str>,
-		sort_dir: Option<&str>,
-	) -> Vec<User> {
-		let order_clause = crate::admin::sort::order_by_clause(sort_by, sort_dir, SORTABLE_FIELDS, DEFAULT_ORDER);
-		let q = format!("select row_to_json(data) from (
-			select id, email, email as label, name, hash, is_superuser,
-			case when users.avatar is not null then
-				json_build_object('path', users.avatar)
-			else null end as avatar,
-			case when users.default_avatar is not null then
-				json_build_object('path', users.default_avatar)
-			else null end as default_avatar,
-			to_char(users.created_at at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') as created_at,
-			to_char(users.updated_at at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') as updated_at
-			from users_users as users
-			where (coalesce(name, '') ilike $3::TEXT or coalesce(email, '') ilike $3::TEXT)
-			{order_clause} offset $1::INT limit $2::INT
-		) data");
-		let pattern = format!("%{}%", query);
-		let items = Lpsql::query(&q)
-			.bind(offset)
-			.bind(size)
-			.bind(pattern)
-			.fetch_all(&self.pool)
-			.await;
+		let mut q = select_users();
+		apply_search(&mut q, search);
+		q.push(&format!(" {order_clause} offset "))
+			.push_bind(offset)
+			.push("::int limit ")
+			.push_bind(size)
+			.push("::int ) data");
+		let items = q.fetch_all(&self.pool).await;
 		items.into_iter().map(|json| serde_json::from_str(&json).unwrap()).collect()
 	}
 	pub async fn create(&self, data: UserForm) -> Option<i32> {

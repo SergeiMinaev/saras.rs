@@ -76,17 +76,10 @@ pub async fn get_users(_req: Request) -> Resp {
 		.map(|v| v.trim().to_string())
 		.filter(|v| !v.is_empty());
 
-	let (users, total) = if let Some(query) = q {
-		(
-			userdb.page_by_query(offset, limit, &query, sort_by.as_deref(), sort_dir.as_deref()).await,
-			userdb.total_count_by_query(&query).await,
-		)
-	} else {
-		(
-			userdb.page(offset, limit, sort_by.as_deref(), sort_dir.as_deref()).await,
-			userdb.total_count().await,
-		)
-	};
+	let (users, total) = (
+		userdb.page(offset, limit, q.as_deref(), sort_by.as_deref(), sort_dir.as_deref()).await,
+		userdb.total_count(q.as_deref()).await,
+	);
 
 	let total_u64 = if total < 0 { 0 } else { total as u64 };
 	let total_pages = if total_u64 == 0 {

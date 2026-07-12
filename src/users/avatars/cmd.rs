@@ -10,7 +10,7 @@ pub async fn gen_default_avatars() {
     let mut offset = 0;
     let size = 20;
     loop {
-        let page_users = userdb.page(offset, size, None, None).await;
+        let page_users = userdb.page(offset, size, None, None, None).await;
         for user in &page_users {
             update_default_avatar(user.id.try_into().unwrap()).await;
         }
