@@ -37,15 +37,17 @@ impl ImgShrinkMode {
 pub struct ImageStorage {
 	storage: Storage,
 	shrink_mode: Option<ImgShrinkMode>,
+	watermark: Option<PathBuf>,
 }
 
 pub struct ImageStorageBuilder {
 	shrink_mode: Option<ImgShrinkMode>,
+	watermark: Option<PathBuf>,
 }
 
 impl ImageStorageBuilder {
 	pub fn new() -> Self {
-		Self { shrink_mode: None }
+		Self { shrink_mode: None, watermark: None }
 	}
 
 	pub fn mode(mut self, mode: ImgShrinkMode) -> Self {
@@ -61,10 +63,18 @@ impl ImageStorageBuilder {
 		self.mode(ImgShrinkMode::High)
 	}
 
+	/// Водяной знак (PNG с альфой) для уменьшенных вариантов.
+	/// Мастер `orig` никогда не затрагивается.
+	pub fn watermark(mut self, path: impl Into<PathBuf>) -> Self {
+		self.watermark = Some(path.into());
+		self
+	}
+
 	pub fn build(self) -> ImageStorage {
 		ImageStorage {
 			storage: Storage::new(),
 			shrink_mode: self.shrink_mode,
+			watermark: self.watermark,
 		}
 	}
 }
@@ -170,22 +180,55 @@ impl ImageStorage {
 		debug!("result path: {}", result_path.display());
 
 		let path = path.strip_prefix("orig").unwrap();
+		self.save_variants(&data, orig_format, path, shrink_mode, &conf, false).await?;
+		Ok(result_path)
+	}
+
+	/// Сгенерировать и залить уменьшенные варианты из исходных байтов.
+	/// `overwrite` — писать в точные ключи поверх существующих (перегенерация).
+	async fn save_variants(
+		&self,
+		data: &Vec<u8>,
+		orig_format: &str,
+		rel_path: &Path,
+		shrink_mode: ImgShrinkMode,
+		conf: &crate::conf::Conf,
+		overwrite: bool,
+	) -> Result<(), Error> {
 		for format in &conf.image_formats {
 			for size in &conf.image_sizes {
-				let mut path = PathBuf::from(size.size.clone()).join(path);
+				let mut path = PathBuf::from(size.size.clone()).join(rel_path);
 				path.set_extension(format);
-				let enc_opts = shrink_mode
-					.apply(img_shrink::EncodeOptionsBuilder::new().size(&size.size))
-					.build();
+				let mut enc_builder = img_shrink::EncodeOptionsBuilder::new().size(&size.size);
+				enc_builder = shrink_mode.apply(enc_builder);
+				if let Some(wm) = &self.watermark {
+					enc_builder = enc_builder.watermark(img_shrink::Watermark::new(wm));
+				}
+				let enc_opts = enc_builder.build();
 				let variant_tmp = Self::with_caught_img_shrink_panic(orig_format, format, || {
-					img_shrink::encode(&data, orig_format, format, enc_opts)
+					img_shrink::encode(data, orig_format, format, enc_opts)
 				})?;
 				let variant_data = open_local_file(&variant_tmp.path().to_path_buf()).await;
-				let variant_path = self.storage.save(variant_data, &path).await?;
-				debug!("variant: {}", variant_path.display());
+				if overwrite {
+					self.storage.save_force_overwrite(variant_data, &path).await?;
+				} else {
+					self.storage.save(variant_data, &path).await?;
+				}
+				debug!("variant: {}", path.display());
 			}
 		}
-		Ok(result_path)
+		Ok(())
+	}
+
+	/// Перегенерировать варианты из байтов мастера (в `main_image_format`),
+	/// перезаписывая существующие ключи. Мастер `orig` не затрагивается.
+	pub async fn regen_variants(&self, data: Vec<u8>, rel_path: &Path) -> Result<(), Error> {
+		let conf = CONF.read().await;
+		let main_format = conf.main_image_format.clone();
+		let shrink_mode = self
+			.shrink_mode
+			.unwrap_or_else(|| ImgShrinkMode::from_conf_value(&conf.img_shrink_quality_mode));
+		self.save_variants(&data, &main_format, rel_path, shrink_mode, &conf, true).await
 	}
 	pub async fn  ls_imgs(&self, path: &PathBuf) -> Vec<String> {
 		let conf = CONF.read().await;
