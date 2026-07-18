@@ -1,6 +1,6 @@
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Mutex;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use log::{debug, error};
 use once_cell::sync::Lazy;
 use crate::errors::Error;
@@ -99,6 +99,25 @@ impl ImageStorage {
 	pub fn builder() -> ImageStorageBuilder {
 		ImageStorageBuilder::new()
 	}
+
+	// Хранилище мастеров: приватный контейнер, если задан в конфиге, иначе основной (старое поведение).
+	fn orig_storage(private_container_name: &str) -> Storage {
+		let name = private_container_name.trim();
+		if name.is_empty() {
+			Storage::new()
+		} else {
+			Storage::with_container(name)
+		}
+	}
+
+	/// Прочитать мастер по стему (без префикса `orig/` и без расширения) из orig-контейнера.
+	pub async fn open_orig(&self, rel_path: &Path) -> Result<Vec<u8>, Error> {
+		let conf = CONF.read().await;
+		let main_format = &conf.main_image_format;
+		let path = PathBuf::from(format!("orig/{}.{main_format}", rel_path.display()));
+		let orig = Self::orig_storage(&conf.selectel.private_container_name);
+		orig.open(&path).await
+	}
 	pub async fn delete(&self, rel_path: &PathBuf) -> Result<(), Error> {
 		let conf = CONF.read().await;
 		for format in &conf.image_formats {
@@ -109,7 +128,8 @@ impl ImageStorage {
 		}
 		let main_format = &conf.main_image_format;
 		let main_path = PathBuf::from(format!("orig/{}.{main_format}", rel_path.display()));
-		self.storage.delete(&main_path).await?;
+		let orig = Self::orig_storage(&conf.selectel.private_container_name);
+		orig.delete(&main_path).await?;
 		Ok(())
 	}
 	pub async fn delete_dir(&self, rel_path: &PathBuf) -> Result<(), Error> {
@@ -119,7 +139,8 @@ impl ImageStorage {
 			self.storage.delete(&path).await?;
 		}
 		let main_path = PathBuf::from(format!("orig/{}", rel_path.display()));
-		self.storage.delete(&main_path).await?;
+		let orig = Self::orig_storage(&conf.selectel.private_container_name);
+		orig.delete(&main_path).await?;
 		Ok(())
 	}
 	pub async fn save(&self, data: Vec<u8>, path: &PathBuf) -> Result<PathBuf, Error> {
@@ -131,9 +152,10 @@ impl ImageStorage {
 			.shrink_mode
 			.unwrap_or_else(|| ImgShrinkMode::from_conf_value(&conf.img_shrink_quality_mode));
 
+		let orig = Self::orig_storage(&conf.selectel.private_container_name);
 		let mut path = PathBuf::from(format!("orig/{}", path.display()));
 		path.set_extension(main_format);
-		let path = self.storage.get_unique_path(&path).await?;
+		let path = orig.get_unique_path(&path).await?;
 
 		let enc_opts = shrink_mode
 			.apply(img_shrink::EncodeOptionsBuilder::new().size(&conf.main_image_size))
@@ -142,7 +164,7 @@ impl ImageStorage {
 			img_shrink::encode(&data, orig_format, main_format, enc_opts)
 		})?;
 		let main_img_data = open_local_file(&main_tmp.path().to_path_buf()).await;
-		let mut result_path = self.storage.save(main_img_data, &path).await?;
+		let mut result_path = orig.save(main_img_data, &path).await?;
 		result_path.set_extension("");
 		let result_path = result_path.strip_prefix("orig").unwrap().to_path_buf();
 		debug!("result path: {}", result_path.display());
@@ -174,10 +196,11 @@ impl ImageStorage {
 				.trim_start_matches('.')
 				.to_lowercase()
 		);
+		let orig = Self::orig_storage(&conf.selectel.private_container_name);
 		drop(conf);
 		let path = norm_path(format!("orig/{}", path.display()));
 		let path = PathBuf::from(path.strip_prefix("/").unwrap_or(&path));
-		let list: Vec<String> = self.storage.ls(&path).await;
+		let list: Vec<String> = orig.ls(&path).await;
 		list.into_iter()
 			.filter_map(|s| {
 				if s.ends_with('/') {

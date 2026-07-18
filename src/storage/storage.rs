@@ -656,6 +656,84 @@ impl Storage {
 		let token: String = resp.headers().get("X-Subject-Token").unwrap().to_str().unwrap().into();
 		token
 	}
+	/// Полный рекурсивный список объектов под префиксом (Swift, без delimiter).
+	/// Возвращает полные имена объектов (с префиксом), с пагинацией по marker.
+	pub async fn list_prefix(&self, prefix: &str) -> Result<Vec<String>, Error> {
+		let prefix = prefix.trim_matches('/');
+		const LIMIT: usize = 10000;
+		let mut out: Vec<String> = Vec::new();
+		let mut marker: Option<String> = None;
+		loop {
+			let mut url = format!("{}?prefix={}/&limit={}", self.base_url_for().await, prefix, LIMIT);
+			if let Some(m) = &marker {
+				url.push_str(&format!("&marker={}", s3_query_encode(m)));
+			}
+			let mut resp = isahc::Request::builder()
+				.method("GET")
+				.uri(url)
+				.header("X-Auth-Token", self.get_token().await)
+				.body(())
+				.map_err(|_| Error::Storage)?
+				.send_async().await
+				.map_err(|_| Error::Storage)?;
+			if resp.status() == StatusCode::NO_CONTENT {
+				break;
+			}
+			if resp.status() != StatusCode::OK {
+				return Err(Error::Storage);
+			}
+			let mut body = resp.into_body();
+			let mut bytes: Vec<u8> = Vec::new();
+			futures_lite::io::AsyncReadExt::read_to_end(&mut body, &mut bytes).await.map_err(|_| Error::Storage)?;
+			let text = String::from_utf8(bytes).map_err(|_| Error::Storage)?;
+			let batch: Vec<String> = text
+				.split('\n')
+				.map(|s| s.trim())
+				.filter(|s| !s.is_empty())
+				.map(|s| s.to_string())
+				.collect();
+			let n = batch.len();
+			if let Some(last) = batch.last() {
+				marker = Some(last.clone());
+			}
+			out.extend(batch);
+			if n < LIMIT {
+				break;
+			}
+		}
+		Ok(out)
+	}
+
+	/// Серверная копия объекта из другого контейнера того же аккаунта (Swift `X-Copy-From`).
+	/// `self` — контейнер-назначение; данные не проходят через процесс.
+	pub async fn copy_from(&self, src_container: &str, path: &Path) -> Result<(), Error> {
+		let token = self.get_token().await;
+		let dst_url = self.api_url_for(path).await;
+		let copy_source = format!("/{}/{}", src_container.trim(), path.display());
+		let resp = isahc::Request::builder()
+			.method("PUT")
+			.uri(dst_url)
+			.header("X-Auth-Token", token)
+			.header("X-Copy-From", copy_source)
+			.header("Content-Length", "0")
+			.body(())
+			.map_err(|_| Error::Storage)?
+			.send_async().await
+			.map_err(|e| {
+				eprintln!("[saras][storage] copy_from failed path={} err={:?}", path.display(), e);
+				Error::Storage
+			})?;
+		if resp.status() != StatusCode::CREATED {
+			eprintln!(
+				"[saras][storage] copy_from non-201 path={} status={}",
+				path.display(),
+				resp.status()
+			);
+			return Err(Error::Storage);
+		}
+		Ok(())
+	}
+
 	pub async fn get_unique_path(&self, path: &PathBuf) -> Result<PathBuf, Error> {
 		let path = PathBuf::from(slugify(path.clone()));
 		let mut new_path = path.clone();

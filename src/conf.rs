@@ -24,6 +24,9 @@ pub struct SelectelConf {
 	pub proj_name: String,
 	pub container_name: String,
 	pub container_hostname: String,
+	// Приватный контейнер под мастера/непубличные объекты. Пусто — orig лежит в основном контейнере (старое поведение).
+	#[serde(default)]
+	pub private_container_name: String,
 	pub svc_user_name: String,
 	pub svc_user_pwd: String,
 	pub s3_access_key_id: Option<String>,
