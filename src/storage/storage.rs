@@ -17,7 +17,7 @@ use serde_json::json;
 use rand::{thread_rng, Rng};
 use rand::distributions::Alphanumeric;
 use crate::errors::Error;
-use crate::conf::CONF;
+use crate::conf::{CONF, S3Conf};
 use crate::memstore::MEMSTORE;
 //use crate::storage::msgs;
 use crate::util::slugify;
@@ -121,6 +121,24 @@ pub struct ContainerCorsState {
 	pub max_age: Option<u32>,
 }
 
+// Разрешённый бэкенд конкретного таргета: родной Swift Selectel либо S3-совместимый (Beget и т.п.).
+enum Backend {
+	Swift { api_base: String, proj_id: String, container: String },
+	S3(S3Conf),
+}
+
+// Параметры для bucket-level S3-операций (CORS/presign): у Selectel-Swift выводятся из его
+// S3-шлюза и ключей CORS, у S3-бэкенда берутся напрямую из его секции конфига.
+struct S3BucketTarget {
+	scheme: String,
+	base_host: String,
+	bucket: String,
+	region: String,
+	access: String,
+	secret: String,
+	path_style: bool,
+}
+
 impl Storage {
 	pub fn new() -> Self {
 		Self {
@@ -194,16 +212,247 @@ impl Storage {
 		format!("{}/{}", self.base_url_for().await, path.display())
 	}
 
+	// Резолвит бэкенд таргета. S3 включается наличием секции s3/map_s3 в конфиге;
+	// явный override контейнера/базы (DEM) всегда остаётся на Swift.
+	async fn backend(&self) -> Backend {
+		let conf = CONF.read().await;
+		if self.container_override.is_none() && self.api_base_override.is_none() {
+			let s3 = if self.use_map { &conf.selectel.map_s3 } else { &conf.selectel.s3 };
+			if let Some(s3) = s3 {
+				return Backend::S3(s3.clone());
+			}
+		}
+		let api_base = if let Some(b) = self.api_base_override.as_ref() {
+			b.trim().to_string()
+		} else if self.use_map {
+			conf.selectel.map_api_base_url.trim().to_string()
+		} else {
+			conf.selectel.api_base_url.trim().to_string()
+		};
+		let container = if let Some(c) = self.container_override.as_ref() {
+			c.trim().to_string()
+		} else if self.use_map {
+			conf.selectel.map_container_name.trim().to_string()
+		} else {
+			conf.selectel.container_name.trim().to_string()
+		};
+		Backend::Swift {
+			api_base,
+			proj_id: conf.selectel.proj_id.trim().to_string(),
+			container,
+		}
+	}
+
+	// Единая точка авторизации запроса к объекту: возвращает готовый URL и набор заголовков.
+	// Swift — токен X-Auth-Token; S3 — подпись SigV4. `extra` (Content-Type/Encoding и т.п.)
+	// прикрепляется к запросу как есть, в подпись S3 не входит.
+	async fn authorized_with(
+		&self,
+		backend: &Backend,
+		method: &str,
+		key: &str,
+		query: &str,
+		payload_hash: &str,
+		extra: &[(String, String)],
+	) -> Result<(String, Vec<(String, String)>), Error> {
+		match backend {
+			Backend::Swift { api_base, proj_id, container } => {
+				let url = format!("{api_base}/{proj_id}/{container}/{key}");
+				let mut headers = vec![("X-Auth-Token".to_string(), self.get_token().await)];
+				headers.extend(extra.iter().cloned());
+				Ok((url, headers))
+			}
+			Backend::S3(c) => {
+				let (host, url, canonical_uri) = s3_request_target(c, key)?;
+				let (amz_date, authorization) = s3_sign_headers(
+					method,
+					&canonical_uri,
+					query,
+					&host,
+					payload_hash,
+					None,
+					&c.access_key_id,
+					&c.secret_access_key,
+					&c.region,
+				)
+				.map_err(|e| {
+					eprintln!("[saras][storage] s3 sign failed: {e}");
+					Error::Storage
+				})?;
+				let mut headers = vec![
+					("Host".to_string(), host),
+					("x-amz-date".to_string(), amz_date),
+					("x-amz-content-sha256".to_string(), payload_hash.to_string()),
+					("Authorization".to_string(), authorization),
+				];
+				headers.extend(extra.iter().cloned());
+				Ok((url, headers))
+			}
+		}
+	}
+
+	// Резолвит параметры для bucket-level S3-операций текущего таргета.
+	async fn s3_bucket_target(&self) -> Result<S3BucketTarget, String> {
+		match self.backend().await {
+			Backend::S3(c) => {
+				let u = Url::parse(c.endpoint.trim())
+					.map_err(|e| format!("[saras] bad s3 endpoint: {e}"))?;
+				let base_host = u
+					.host_str()
+					.ok_or_else(|| "[saras] s3 endpoint missing host".to_string())?
+					.to_string();
+				Ok(S3BucketTarget {
+					scheme: u.scheme().to_string(),
+					base_host,
+					bucket: c.bucket.clone(),
+					region: c.region.clone(),
+					access: c.access_key_id.clone(),
+					secret: c.secret_access_key.clone(),
+					path_style: c.path_style,
+				})
+			}
+			Backend::Swift { api_base, container, .. } => {
+				let conf = CONF.read().await;
+				let access = conf
+					.selectel
+					.s3_access_key_id
+					.clone()
+					.map(|s| s.trim().to_string())
+					.filter(|v| !v.is_empty())
+					.ok_or_else(|| "[saras] missing selectel.s3_access_key_id".to_string())?;
+				let secret = conf
+					.selectel
+					.s3_secret_access_key
+					.clone()
+					.map(|s| s.trim().to_string())
+					.filter(|v| !v.is_empty())
+					.ok_or_else(|| "[saras] missing selectel.s3_secret_access_key".to_string())?;
+				drop(conf);
+				let (base_host, region) = s3_host_and_region_from_swift(&api_base)?;
+				Ok(S3BucketTarget {
+					scheme: "https".to_string(),
+					base_host,
+					bucket: container,
+					region,
+					access,
+					secret,
+					path_style: true,
+				})
+			}
+		}
+	}
+
+	// S3 ListObjectsV2 с пагинацией. Возвращает (полные ключи, common-prefixes).
+	// delimiter=Some("/") группирует по «папкам» (common-prefixes), None — плоский список ключей.
+	async fn s3_list_objects(
+		&self,
+		c: &S3Conf,
+		prefix: &str,
+		delimiter: Option<&str>,
+	) -> Result<(Vec<String>, Vec<String>), Error> {
+		let u = Url::parse(c.endpoint.trim()).map_err(|_| Error::Storage)?;
+		let scheme = u.scheme().to_string();
+		let base_host = u.host_str().ok_or(Error::Storage)?.to_string();
+		let (host, base_uri) = if c.path_style {
+			(base_host.clone(), format!("/{}", c.bucket))
+		} else {
+			(format!("{}.{}", c.bucket, base_host), "/".to_string())
+		};
+		let payload_hash = sha256_hex(b"");
+
+		let mut keys: Vec<String> = Vec::new();
+		let mut common: Vec<String> = Vec::new();
+		let mut token: Option<String> = None;
+		loop {
+			let mut params: Vec<(String, String)> = vec![
+				("list-type".to_string(), "2".to_string()),
+				("max-keys".to_string(), "1000".to_string()),
+			];
+			if !prefix.is_empty() {
+				params.push(("prefix".to_string(), prefix.to_string()));
+			}
+			if let Some(d) = delimiter {
+				params.push(("delimiter".to_string(), d.to_string()));
+			}
+			if let Some(t) = &token {
+				params.push(("continuation-token".to_string(), t.clone()));
+			}
+			params.sort_by(|a, b| a.0.cmp(&b.0));
+			let canonical_query = params
+				.iter()
+				.map(|(k, v)| format!("{}={}", s3_query_encode(k), s3_query_encode(v)))
+				.collect::<Vec<_>>()
+				.join("&");
+
+			let (amz_date, authorization) = s3_sign_headers(
+				"GET",
+				&base_uri,
+				&canonical_query,
+				&host,
+				&payload_hash,
+				None,
+				&c.access_key_id,
+				&c.secret_access_key,
+				&c.region,
+			)
+			.map_err(|e| {
+				eprintln!("[saras][storage] s3 list sign failed: {e}");
+				Error::Storage
+			})?;
+
+			let url = format!("{scheme}://{host}{base_uri}?{canonical_query}");
+			let mut resp = isahc::Request::builder()
+				.method("GET")
+				.uri(url)
+				.header("Host", host.as_str())
+				.header("x-amz-date", amz_date)
+				.header("x-amz-content-sha256", payload_hash.as_str())
+				.header("Authorization", authorization)
+				.body(())
+				.map_err(|_| Error::Storage)?
+				.send_async().await
+				.map_err(|_| Error::Storage)?;
+			if resp.status() != StatusCode::OK {
+				return Err(Error::Storage);
+			}
+			let mut body = resp.into_body();
+			let mut bytes: Vec<u8> = Vec::new();
+			futures_lite::io::AsyncReadExt::read_to_end(&mut body, &mut bytes)
+				.await
+				.map_err(|_| Error::Storage)?;
+			let xml = String::from_utf8(bytes).map_err(|_| Error::Storage)?;
+
+			keys.extend(xml_extract_all(&xml, "Key"));
+			for block in xml_extract_all(&xml, "CommonPrefixes") {
+				common.extend(xml_extract_all(&block, "Prefix"));
+			}
+			let truncated = xml_extract_all(&xml, "IsTruncated")
+				.first()
+				.map(|s| s == "true")
+				.unwrap_or(false);
+			let next = xml_extract_all(&xml, "NextContinuationToken").into_iter().next();
+			if truncated && next.is_some() {
+				token = next;
+			} else {
+				break;
+			}
+		}
+		Ok((keys, common))
+	}
+
 	pub async fn exists<P: AsRef<Path>>(&self, path: P) -> Result<bool, Error>{
-		let token = self.get_token().await;
-		let url = self.api_url_for(path.as_ref()).await;
-		let req = isahc::Request::builder()
-			.method("HEAD")
-			.uri(url.clone())
-			.header("X-Auth-Token", token)
-			.body(())
-			.map_err(|_| Error::Storage)?;
-		let mut resp = req.send_async().await.map_err(|e| {
+		let backend = self.backend().await;
+		let key = path.as_ref().display().to_string();
+		let payload_hash = sha256_hex(b"");
+		let (url, headers) = self
+			.authorized_with(&backend, "HEAD", &key, "", &payload_hash, &[])
+			.await?;
+		let mut b = isahc::Request::builder().method("HEAD").uri(url);
+		for (k, v) in &headers {
+			b = b.header(k.as_str(), v.as_str());
+		}
+		let req = b.body(()).map_err(|_| Error::Storage)?;
+		let resp = req.send_async().await.map_err(|e| {
 			eprintln!(
 				"[saras][storage] exists failed path={} err={:?}",
 				path.as_ref().display(),
@@ -215,14 +464,17 @@ impl Storage {
 	}
 
 	pub async fn stat_content_length<P: AsRef<Path>>(&self, path: P) -> Result<Option<u64>, Error>{
-		let token = self.get_token().await;
-		let url = self.api_url_for(path.as_ref()).await;
-		let req = isahc::Request::builder()
-			.method("HEAD")
-			.uri(url.clone())
-			.header("X-Auth-Token", token)
-			.body(())
-			.map_err(|_| Error::Storage)?;
+		let backend = self.backend().await;
+		let key = path.as_ref().display().to_string();
+		let payload_hash = sha256_hex(b"");
+		let (url, headers) = self
+			.authorized_with(&backend, "HEAD", &key, "", &payload_hash, &[])
+			.await?;
+		let mut b = isahc::Request::builder().method("HEAD").uri(url);
+		for (k, v) in &headers {
+			b = b.header(k.as_str(), v.as_str());
+		}
+		let req = b.body(()).map_err(|_| Error::Storage)?;
 		let resp = req.send_async().await.map_err(|e| {
 			eprintln!(
 				"[saras][storage] stat_content_length failed path={} err={:?}",
@@ -246,10 +498,14 @@ impl Storage {
 		Ok(len)
 	}
 	pub async fn open(&self, path: &PathBuf) -> Result<Vec<u8>, Error> {
-		let url = match path.to_str() {
-			Some(s) if s.starts_with("http://") || s.starts_with("https://") => s.to_string(),
-			_ => self.api_url_for(path.as_path()).await,
+		// Абсолютный URL — публичное чтение по прямой ссылке, без авторизации.
+		let abs_url = match path.to_str() {
+			Some(s) if s.starts_with("http://") || s.starts_with("https://") => Some(s.to_string()),
+			_ => None,
 		};
+		let backend = if abs_url.is_none() { Some(self.backend().await) } else { None };
+		let key = path.display().to_string();
+		let payload_hash = sha256_hex(b"");
 
 		// Расширение .br определяем один раз — не зависит от попытки
 		let is_br_ext = path.extension()
@@ -262,10 +518,18 @@ impl Storage {
 				task::sleep(StdDuration::from_millis(200 * (1u64 << attempt))).await;
 			}
 
-			let req = isahc::Request::builder()
-				.method("GET")
-				.uri(url.clone())
-				.header("X-Auth-Token", self.get_token().await)
+			// S3-подпись пересчитываем на каждой попытке (свежий x-amz-date).
+			let (url, headers) = if let Some(u) = &abs_url {
+				(u.clone(), Vec::new())
+			} else {
+				self.authorized_with(backend.as_ref().unwrap(), "GET", &key, "", &payload_hash, &[]).await?
+			};
+
+			let mut bld = isahc::Request::builder().method("GET").uri(url.clone());
+			for (k, v) in &headers {
+				bld = bld.header(k.as_str(), v.as_str());
+			}
+			let req = bld
 				.body(())
 				.map_err(|e| {
 					eprintln!(
@@ -343,15 +607,25 @@ impl Storage {
 		}
 
 		eprintln!(
-			"[saras][storage] open all attempts failed path={} url={}",
-			path.display(),
-			url
+			"[saras][storage] open all attempts failed path={}",
+			path.display()
 		);
 		Err(Error::Storage)
 	}
 	pub async fn ls(&self, path: &PathBuf) -> Vec<String> {
 		let raw_prefix = path.display().to_string();
 		let prefix = raw_prefix.trim_matches('/');
+		if let Backend::S3(c) = self.backend().await {
+			let full_prefix = if prefix.is_empty() { String::new() } else { format!("{prefix}/") };
+			let (keys, common) = match self.s3_list_objects(&c, &full_prefix, Some("/")).await {
+				Ok(v) => v,
+				Err(_) => return Vec::new(),
+			};
+			return common.into_iter().chain(keys.into_iter())
+				.map(|s| s.strip_prefix("orig/").map(|x| x.to_string()).unwrap_or(s))
+				.filter(|s| !s.is_empty() && (s.contains('.') || s.ends_with('/')))
+				.collect();
+		}
 		let url = if prefix.is_empty() {
 			format!("{}?delimiter=/", self.base_url_for().await)
 		} else {
@@ -382,23 +656,24 @@ impl Storage {
 			.collect()
 	}
 	pub async fn delete<P: AsRef<Path>>(&self, path: P) -> Result<(), Error>{
-		//debug!("Storage delete path {}", path.as_ref().display());
-		let token = self.get_token().await;
-		let url = self.api_url_for(path.as_ref()).await;
-		//debug!("Storage delete url {}", url);
-		let mut resp = isahc::Request::builder()
-			.method("DELETE")
-			.uri(url)
-			.header("X-Auth-Token", token)
+		let backend = self.backend().await;
+		let key = path.as_ref().display().to_string();
+		let payload_hash = sha256_hex(b"");
+		let (url, headers) = self
+			.authorized_with(&backend, "DELETE", &key, "", &payload_hash, &[])
+			.await?;
+		let mut b = isahc::Request::builder().method("DELETE").uri(url);
+		for (k, v) in &headers {
+			b = b.header(k.as_str(), v.as_str());
+		}
+		let resp = b
 			.body(())
-			.unwrap()
+			.map_err(|_| Error::Storage)?
 			.send_async().await
 			.map_err(|_| Error::Storage)?;
-		//debug!("storage resp: {resp:?}");
-		//debug!("storage status: {:?}", resp.status());
 		match resp.status() {
-			StatusCode::NO_CONTENT | StatusCode::NOT_FOUND => return Ok(()),
-			_ => return Err(Error::Storage),
+			StatusCode::NO_CONTENT | StatusCode::NOT_FOUND => Ok(()),
+			_ => Err(Error::Storage),
 		}
 	}
 	pub async fn save(&self, data: Vec<u8>, path: &PathBuf) -> Result<PathBuf, Error> {
@@ -462,38 +737,44 @@ impl Storage {
 	) -> Result<PathBuf, Error> {
 		let mut path = path.clone();
 		if fixed_path {
-			if self.exists(&path).await? {
-				if !is_force_overwrite {
-					return Err(Error::Common)
-				}
+			// При force перезапись идёт всегда — лишний HEAD не делаем (актуально на массовой заливке тайлов).
+			if !is_force_overwrite && self.exists(&path).await? {
+				return Err(Error::Common)
 			}
 		} else {
 			path = self.get_unique_path(&path).await?;
 		}
 
-		let url = self.api_url_for(&path).await;
-		//debug!("Storage save url{}", url);
+		let backend = self.backend().await;
 
-		// add Content-Encoding: br when uploading pre-compressed *.br objects
+		// Content-Encoding: br для предсжатых *.br объектов.
 		let is_br = is_br || path
 			.extension()
 			.and_then(|e| e.to_str())
 			.map(|s| s.eq_ignore_ascii_case("br"))
 			.unwrap_or(false);
 
-		let mut req_builder = isahc::Request::builder()
-			.method("PUT")
-			.uri(url)
-			.header("X-Auth-Token", self.get_token().await);
-
+		let key = path.display().to_string();
+		let payload_hash = sha256_hex(&data);
+		let mut extra: Vec<(String, String)> = Vec::new();
+		if let Backend::S3(_) = &backend {
+			if let Some(ct) = content_type_for_path(&path) {
+				extra.push(("Content-Type".to_string(), ct.to_string()));
+			}
+		}
 		if is_br {
-			req_builder = req_builder.header("Content-Encoding", "br");
+			extra.push(("Content-Encoding".to_string(), "br".to_string()));
 		}
 
-		let req = req_builder
-			.body(AsyncBody::from(data))
-			.map_err(|_| Error::Storage)?;
-		let mut resp = req.send_async().await.map_err(|e| {
+		let (url, headers) = self
+			.authorized_with(&backend, "PUT", &key, "", &payload_hash, &extra)
+			.await?;
+		let mut b = isahc::Request::builder().method("PUT").uri(url);
+		for (k, v) in &headers {
+			b = b.header(k.as_str(), v.as_str());
+		}
+		let req = b.body(AsyncBody::from(data)).map_err(|_| Error::Storage)?;
+		let resp = req.send_async().await.map_err(|e| {
 			eprintln!(
 				"[saras][storage] save failed path={} err={:?}",
 				path.display(),
@@ -501,7 +782,8 @@ impl Storage {
 			);
 			Error::Storage
 		})?;
-		if resp.status() != StatusCode::CREATED {
+		// Swift отдаёт 201 Created, S3 PutObject — 200 OK.
+		if resp.status() != StatusCode::CREATED && resp.status() != StatusCode::OK {
 			eprintln!(
 				"[saras][storage] save failed path={} status={} headers={:?}",
 				path.display(),
@@ -535,14 +817,32 @@ impl Storage {
 			path = self.get_unique_path(&path).await?;
 		}
 
-		let url = self.api_url_for(&path).await;
-		let token = self.get_token().await;
 		let is_br = is_br
 			|| path
 				.extension()
 				.and_then(|e| e.to_str())
 				.map(|s| s.eq_ignore_ascii_case("br"))
 				.unwrap_or(false);
+
+		let backend = self.backend().await;
+		// Тело потоковое — sha256 не посчитать заранее, для S3 подписываем как UNSIGNED-PAYLOAD.
+		let payload_hash = if let Backend::S3(_) = &backend {
+			"UNSIGNED-PAYLOAD".to_string()
+		} else {
+			String::new()
+		};
+		let mut extra: Vec<(String, String)> = Vec::new();
+		if let Backend::S3(_) = &backend {
+			if let Some(ct) = content_type_for_path(&path) {
+				extra.push(("Content-Type".to_string(), ct.to_string()));
+			}
+		}
+		if is_br {
+			extra.push(("Content-Encoding".to_string(), "br".to_string()));
+		}
+		let (url, headers) = self
+			.authorized_with(&backend, "PUT", &path.display().to_string(), "", &payload_hash, &extra)
+			.await?;
 
 		let log_path = path.clone();
 		let res: Result<(), Error> = task::spawn_blocking(move || {
@@ -556,10 +856,9 @@ impl Storage {
 			);
 			let mut req_builder = isahc::Request::builder()
 				.method("PUT")
-				.uri(url)
-				.header("X-Auth-Token", token);
-			if is_br {
-				req_builder = req_builder.header("Content-Encoding", "br");
+				.uri(url);
+			for (k, v) in &headers {
+				req_builder = req_builder.header(k.as_str(), v.as_str());
 			}
 			let progress_reader = ProgressReader::new(
 				reader,
@@ -578,7 +877,7 @@ impl Storage {
 				);
 				Error::Storage
 			})?;
-			if resp.status() != StatusCode::CREATED {
+			if resp.status() != StatusCode::CREATED && resp.status() != StatusCode::OK {
 				let status = resp.status();
 				let body = resp.text().unwrap_or_else(|_| "<unreadable>".to_string());
 				println!(
@@ -660,6 +959,11 @@ impl Storage {
 	/// Возвращает полные имена объектов (с префиксом), с пагинацией по marker.
 	pub async fn list_prefix(&self, prefix: &str) -> Result<Vec<String>, Error> {
 		let prefix = prefix.trim_matches('/');
+		if let Backend::S3(c) = self.backend().await {
+			let full_prefix = format!("{prefix}/");
+			let (keys, _) = self.s3_list_objects(&c, &full_prefix, None).await?;
+			return Ok(keys);
+		}
 		const LIMIT: usize = 10000;
 		let mut out: Vec<String> = Vec::new();
 		let mut marker: Option<String> = None;
@@ -707,6 +1011,12 @@ impl Storage {
 	/// Серверная копия объекта из другого контейнера того же аккаунта (Swift `X-Copy-From`).
 	/// `self` — контейнер-назначение; данные не проходят через процесс.
 	pub async fn copy_from(&self, src_container: &str, path: &Path) -> Result<(), Error> {
+		// Серверный COPY — это Swift X-Copy-From внутри аккаунта. На S3-бэкенде эквивалента
+		// в текущем виде нет (нужна подпись CopyObject с x-amz-copy-source); не притворяемся.
+		if let Backend::S3(_) = self.backend().await {
+			eprintln!("[saras][storage] copy_from не поддержан на S3-бэкенде");
+			return Err(Error::Storage);
+		}
 		let token = self.get_token().await;
 		let dst_url = self.api_url_for(path).await;
 		let copy_source = format!("/{}/{}", src_container.trim(), path.display());
@@ -744,54 +1054,31 @@ impl Storage {
 	}
 
 	pub async fn set_container_cors(&self, cors: &ContainerCors) -> Result<(), String> {
-		let conf = CONF.read().await;
-		let bucket = if let Some(c) = self.container_override.as_ref() {
-			c.trim().to_string()
-		} else if self.use_map {
-			conf.selectel.map_container_name.trim().to_string()
+		let t = self.s3_bucket_target().await?;
+		let (host, canonical_uri, url) = if t.path_style {
+			(
+				t.base_host.clone(),
+				format!("/{}", t.bucket),
+				format!("{}://{}/{}?cors=", t.scheme, t.base_host, t.bucket),
+			)
 		} else {
-			conf.selectel.container_name.trim().to_string()
+			let h = format!("{}.{}", t.bucket, t.base_host);
+			(h.clone(), "/".to_string(), format!("{}://{}/?cors=", t.scheme, h))
 		};
-		let access_key = conf
-			.selectel
-			.s3_access_key_id
-			.clone()
-			.map(|s| s.trim().to_string())
-			.filter(|v| !v.is_empty())
-			.ok_or_else(|| "[saras] missing selectel.s3_access_key_id".to_string())?;
-		let secret_key = conf
-			.selectel
-			.s3_secret_access_key
-			.clone()
-			.map(|s| s.trim().to_string())
-			.filter(|v| !v.is_empty())
-			.ok_or_else(|| "[saras] missing selectel.s3_secret_access_key".to_string())?;
-		let api_base = if let Some(b) = self.api_base_override.as_ref() {
-			b.trim().to_string()
-		} else if self.use_map {
-			conf.selectel.map_api_base_url.trim().to_string()
-		} else {
-			conf.selectel.api_base_url.trim().to_string()
-		};
-		let (s3_base_host, region) = s3_host_and_region_from_swift(&api_base)?;
-		drop(conf);
-
-		let host = s3_base_host.clone();
-		let url = format!("https://{host}/{bucket}?cors=");
 		let xml = s3_cors_xml(cors)?;
 		let content_md5 = md5_base64(xml.as_bytes());
 
 		let payload_hash = sha256_hex(xml.as_bytes());
 		let (amz_date, authorization) = s3_sign_headers(
 			"PUT",
-			&format!("/{bucket}"),
+			&canonical_uri,
 			"cors=",
 			&host,
 			&payload_hash,
 			Some(&content_md5),
-			&access_key,
-			&secret_key,
-			&region,
+			&t.access,
+			&t.secret,
+			&t.region,
 		)?;
 
 		let req = isahc::Request::builder()
@@ -830,52 +1117,29 @@ impl Storage {
 	}
 
 	pub async fn get_container_cors(&self) -> Result<ContainerCorsState, String> {
-		let conf = CONF.read().await;
-		let bucket = if let Some(c) = self.container_override.as_ref() {
-			c.trim().to_string()
-		} else if self.use_map {
-			conf.selectel.map_container_name.trim().to_string()
+		let t = self.s3_bucket_target().await?;
+		let (host, canonical_uri, url) = if t.path_style {
+			(
+				t.base_host.clone(),
+				format!("/{}", t.bucket),
+				format!("{}://{}/{}?cors=", t.scheme, t.base_host, t.bucket),
+			)
 		} else {
-			conf.selectel.container_name.trim().to_string()
+			let h = format!("{}.{}", t.bucket, t.base_host);
+			(h.clone(), "/".to_string(), format!("{}://{}/?cors=", t.scheme, h))
 		};
-		let access_key = conf
-			.selectel
-			.s3_access_key_id
-			.clone()
-			.map(|s| s.trim().to_string())
-			.filter(|v| !v.is_empty())
-			.ok_or_else(|| "[saras] missing selectel.s3_access_key_id".to_string())?;
-		let secret_key = conf
-			.selectel
-			.s3_secret_access_key
-			.clone()
-			.map(|s| s.trim().to_string())
-			.filter(|v| !v.is_empty())
-			.ok_or_else(|| "[saras] missing selectel.s3_secret_access_key".to_string())?;
-		let api_base = if let Some(b) = self.api_base_override.as_ref() {
-			b.trim().to_string()
-		} else if self.use_map {
-			conf.selectel.map_api_base_url.trim().to_string()
-		} else {
-			conf.selectel.api_base_url.trim().to_string()
-		};
-		let (s3_base_host, region) = s3_host_and_region_from_swift(&api_base)?;
-		drop(conf);
-
-		let host = s3_base_host.clone();
-		let url = format!("https://{host}/{bucket}?cors=");
 
 		let payload_hash = sha256_hex(b"");
 		let (amz_date, authorization) = s3_sign_headers(
 			"GET",
-			&format!("/{bucket}"),
+			&canonical_uri,
 			"cors=",
 			&host,
 			&payload_hash,
 			None,
-			&access_key,
-			&secret_key,
-			&region,
+			&t.access,
+			&t.secret,
+			&t.region,
 		)?;
 
 		let req = isahc::Request::builder()
@@ -920,50 +1184,53 @@ impl Storage {
 		expires_sec: u32,
 		content_type: Option<&str>,
 	) -> Result<String, String> {
-		let conf = CONF.read().await;
-		let bucket = if let Some(c) = self.container_override.as_ref() {
-			c.trim().to_string()
-		} else if self.use_map {
-			conf.selectel.map_container_name.trim().to_string()
-		} else {
-			conf.selectel.container_name.trim().to_string()
+		let (host, uri, access, secret, region) = match self.backend().await {
+			Backend::S3(c) => {
+				let u = Url::parse(c.endpoint.trim())
+					.map_err(|e| format!("[saras] bad s3 endpoint: {e}"))?;
+				let base_host = u
+					.host_str()
+					.ok_or_else(|| "[saras] s3 endpoint missing host".to_string())?
+					.to_string();
+				let encoded_key = s3_uri_encode_path(&path.to_string_lossy());
+				let (host, uri) = if c.path_style {
+					(base_host.clone(), format!("/{}/{}", c.bucket, encoded_key))
+				} else {
+					(format!("{}.{}", c.bucket, base_host), format!("/{encoded_key}"))
+				};
+				(host, uri, c.access_key_id.clone(), c.secret_access_key.clone(), c.region.clone())
+			}
+			Backend::Swift { api_base, container, .. } => {
+				let conf = CONF.read().await;
+				let access = conf
+					.selectel
+					.s3_access_key_id
+					.clone()
+					.map(|s| s.trim().to_string())
+					.filter(|v| !v.is_empty())
+					.ok_or_else(|| "[saras] missing selectel.s3_access_key_id".to_string())?;
+				let secret = conf
+					.selectel
+					.s3_secret_access_key
+					.clone()
+					.map(|s| s.trim().to_string())
+					.filter(|v| !v.is_empty())
+					.ok_or_else(|| "[saras] missing selectel.s3_secret_access_key".to_string())?;
+				drop(conf);
+				let (s3_base_host, region) = s3_host_and_region_from_swift(&api_base)?;
+				let encoded_key = s3_uri_encode_path(&path.to_string_lossy());
+				// Selectel — virtual-hosted, как исторически.
+				(format!("{container}.{s3_base_host}"), format!("/{encoded_key}"), access, secret, region)
+			}
 		};
-		let access_key = conf
-			.selectel
-			.s3_access_key_id
-			.clone()
-			.map(|s| s.trim().to_string())
-			.filter(|v| !v.is_empty())
-			.ok_or_else(|| "[saras] missing selectel.s3_access_key_id".to_string())?;
-		let secret_key = conf
-			.selectel
-			.s3_secret_access_key
-			.clone()
-			.map(|s| s.trim().to_string())
-			.filter(|v| !v.is_empty())
-			.ok_or_else(|| "[saras] missing selectel.s3_secret_access_key".to_string())?;
-		let api_base = if let Some(b) = self.api_base_override.as_ref() {
-			b.trim().to_string()
-		} else if self.use_map {
-			conf.selectel.map_api_base_url.trim().to_string()
-		} else {
-			conf.selectel.api_base_url.trim().to_string()
-		};
-		let (s3_base_host, region) = s3_host_and_region_from_swift(&api_base)?;
-		drop(conf);
-
-		let host = format!("{bucket}.{s3_base_host}");
-		let key = path.to_string_lossy();
-		let encoded_key = s3_uri_encode_path(&key);
-		let uri = format!("/{encoded_key}");
 
 		Ok(s3_presign_put(
 			&host,
 			&uri,
 			expires_sec,
 			content_type,
-			&access_key,
-			&secret_key,
+			&access,
+			&secret,
 			&region,
 		)?)
 	}
@@ -1186,6 +1453,26 @@ fn s3_sign_headers(
 	let now = chrono::Utc::now();
 	let amz_date = now.format("%Y%m%dT%H%M%SZ").to_string();
 	let date_stamp = now.format("%Y%m%d").to_string();
+	s3_sign_with_date(
+		method, uri, canonical_query, host, payload_hash, content_md5,
+		access_key, secret_key, region, &amz_date, &date_stamp,
+	)
+}
+
+// Чистое ядро подписи SigV4 с явной датой — детерминировано, тестируется на эталонных векторах.
+fn s3_sign_with_date(
+	method: &str,
+	uri: &str,
+	canonical_query: &str,
+	host: &str,
+	payload_hash: &str,
+	content_md5: Option<&str>,
+	access_key: &str,
+	secret_key: &str,
+	region: &str,
+	amz_date: &str,
+	date_stamp: &str,
+) -> Result<(String, String), String> {
 	let (canonical_headers, signed_headers) = if let Some(md5) = content_md5 {
 		(
 			format!(
@@ -1214,13 +1501,13 @@ x-amz-date:{amz_date}\n"
 		"AWS4-HMAC-SHA256\n{amz_date}\n{scope}\n{}",
 		sha256_hex(canonical_request.as_bytes())
 	);
-	let signing_key = s3_signing_key(secret_key, &date_stamp, region);
+	let signing_key = s3_signing_key(secret_key, date_stamp, region);
 	let sig = hmac_sha256(&signing_key, string_to_sign.as_bytes());
 	let signature = hex_lower(&sig);
 	let authorization = format!(
 		"AWS4-HMAC-SHA256 Credential={access_key}/{scope}, SignedHeaders={signed_headers}, Signature={signature}"
 	);
-	Ok((amz_date, authorization))
+	Ok((amz_date.to_string(), authorization))
 }
 
 fn s3_presign_put(
@@ -1313,4 +1600,134 @@ fn s3_parse_cors_xml(xml: &str) -> Result<ContainerCorsState, String> {
 fn md5_base64(data: &[u8]) -> String {
 	let digest = md5::compute(data);
 	base64::engine::general_purpose::STANDARD.encode(digest.0)
+}
+
+// Строит для S3-запроса тройку (host, полный URL, канонический URI для подписи).
+// path-style: endpoint/bucket/key; virtual-hosted: bucket.host/key.
+fn s3_request_target(c: &S3Conf, key: &str) -> Result<(String, String, String), Error> {
+	let u = Url::parse(c.endpoint.trim()).map_err(|_| Error::Storage)?;
+	let scheme = u.scheme();
+	let base_host = u.host_str().ok_or(Error::Storage)?.to_string();
+	let encoded_key = s3_uri_encode_path(key);
+	if c.path_style {
+		let uri = format!("/{}/{}", c.bucket, encoded_key);
+		let url = format!("{scheme}://{base_host}{uri}");
+		Ok((base_host, url, uri))
+	} else {
+		let host = format!("{}.{}", c.bucket, base_host);
+		let uri = format!("/{encoded_key}");
+		let url = format!("{scheme}://{host}{uri}");
+		Ok((host, url, uri))
+	}
+}
+
+// Извлекает содержимое всех вхождений простого тега <tag>...</tag> из XML.
+fn xml_extract_all(xml: &str, tag: &str) -> Vec<String> {
+	let open = format!("<{tag}>");
+	let close = format!("</{tag}>");
+	let mut out: Vec<String> = Vec::new();
+	let mut rest = xml;
+	while let Some(i) = rest.find(&open) {
+		let after = &rest[i + open.len()..];
+		let Some(j) = after.find(&close) else { break };
+		out.push(after[..j].to_string());
+		rest = &after[j + close.len()..];
+	}
+	out
+}
+
+// Content-Type по расширению объекта (важно для прямой раздачи с S3).
+fn content_type_for_path(path: &Path) -> Option<&'static str> {
+	let ext = path.extension().and_then(|e| e.to_str())?.to_ascii_lowercase();
+	let ct = match ext.as_str() {
+		"webp" => "image/webp",
+		"png" => "image/png",
+		"jpg" | "jpeg" => "image/jpeg",
+		"mvt" | "pbf" => "application/vnd.mapbox-vector-tile",
+		"json" => "application/json",
+		"zst" => "application/zstd",
+		_ => return None,
+	};
+	Some(ct)
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+	use std::path::PathBuf;
+
+	// Эталонный signing key AWS для s3/us-east-1/20130524 (совпадает с документацией AWS).
+	#[test]
+	fn sigv4_signing_key_matches_aws_vector() {
+		let key = s3_signing_key(
+			"wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+			"20130524",
+			"us-east-1",
+		);
+		assert_eq!(
+			hex_lower(&key),
+			"dbb893acc010964918f1fd433add87c70e8b0db6be30c1fbeafefa5ec6ba8378"
+		);
+	}
+
+	// Подпись нашего канонического запроса сверена с независимой реализацией (Python hmac/hashlib).
+	#[test]
+	fn sigv4_signature_matches_independent_vector() {
+		let payload = sha256_hex(b"");
+		let (amz_date, authorization) = s3_sign_with_date(
+			"GET",
+			"/test.txt",
+			"",
+			"examplebucket.s3.amazonaws.com",
+			&payload,
+			None,
+			"AKIAIOSFODNN7EXAMPLE",
+			"wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+			"us-east-1",
+			"20130524T000000Z",
+			"20130524",
+		)
+		.unwrap();
+		assert_eq!(amz_date, "20130524T000000Z");
+		assert!(
+			authorization.contains(
+				"Credential=AKIAIOSFODNN7EXAMPLE/20130524/us-east-1/s3/aws4_request"
+			),
+			"auth={authorization}"
+		);
+		assert!(authorization.contains("SignedHeaders=host;x-amz-content-sha256;x-amz-date"));
+		assert!(
+			authorization.ends_with(
+				"Signature=df548e2ce037944d03f3e68682813b093763996d597cf890ca3d9037fd231eb4"
+			),
+			"auth={authorization}"
+		);
+	}
+
+	#[test]
+	fn uri_encode_preserves_slashes() {
+		assert_eq!(s3_uri_encode_path("map/1/2/3.mvt"), "map/1/2/3.mvt");
+		assert_eq!(s3_uri_encode_path("heat/v2/10/512/300.webp"), "heat/v2/10/512/300.webp");
+	}
+
+	#[test]
+	fn xml_extract_all_repeated_tags() {
+		let xml = "<ListBucketResult><Contents><Key>a/1.webp</Key></Contents>\
+			<Contents><Key>a/2.webp</Key></Contents>\
+			<IsTruncated>true</IsTruncated>\
+			<NextContinuationToken>tok123</NextContinuationToken></ListBucketResult>";
+		assert_eq!(xml_extract_all(xml, "Key"), vec!["a/1.webp", "a/2.webp"]);
+		assert_eq!(xml_extract_all(xml, "NextContinuationToken"), vec!["tok123"]);
+		assert_eq!(xml_extract_all(xml, "IsTruncated"), vec!["true"]);
+	}
+
+	#[test]
+	fn content_type_by_extension() {
+		assert_eq!(content_type_for_path(&PathBuf::from("t/1.webp")), Some("image/webp"));
+		assert_eq!(
+			content_type_for_path(&PathBuf::from("map/1/2/3.mvt")),
+			Some("application/vnd.mapbox-vector-tile")
+		);
+		assert_eq!(content_type_for_path(&PathBuf::from("t/1.bin")), None);
+	}
 }

@@ -17,6 +17,24 @@ pub struct ImageSize {
 	pub crop: bool,
 }
 
+// Описание S3-совместимого таргета (Beget и т.п.). Наличие такой секции у контейнера
+// переключает его с родного Swift-протокола Selectel на S3 SigV4 без смены остального конфига.
+#[derive(Debug, Deserialize, Clone)]
+pub struct S3Conf {
+	// Базовый URL эндпоинта, напр. https://s3.ru1.storage.beget.cloud
+	pub endpoint: String,
+	// Регион для подписи AWS SigV4 (у S3-совместимых провайдеров задаётся явно).
+	pub region: String,
+	pub bucket: String,
+	pub access_key_id: String,
+	pub secret_access_key: String,
+	// true — path-style (endpoint/bucket/key), false — virtual-hosted (bucket.host/key).
+	#[serde(default = "default_true")]
+	pub path_style: bool,
+	// Публичный хост для прямых ссылок на объекты (свой домен или URL бакета).
+	pub hostname: String,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct SelectelConf {
 	pub account_id: String,
@@ -36,6 +54,16 @@ pub struct SelectelConf {
 	pub map_api_base_url: String,
 	pub map_container_name: String,
 	pub map_container_hostname: String,
+	// S3-таргет основного контейнера. Задан — основной контейнер идёт на S3, иначе Swift.
+	#[serde(default)]
+	pub s3: Option<S3Conf>,
+	// S3-таргет map-контейнера. Задан — тайлы карты идут на S3, иначе Swift.
+	#[serde(default)]
+	pub map_s3: Option<S3Conf>,
+}
+
+fn default_true() -> bool {
+	true
 }
 
 #[derive(Debug, Deserialize)]
