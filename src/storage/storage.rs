@@ -766,33 +766,62 @@ impl Storage {
 			extra.push(("Content-Encoding".to_string(), "br".to_string()));
 		}
 
-		let (url, headers) = self
-			.authorized_with(&backend, "PUT", &key, "", &payload_hash, &extra)
-			.await?;
-		let mut b = isahc::Request::builder().method("PUT").uri(url);
-		for (k, v) in &headers {
-			b = b.header(k.as_str(), v.as_str());
-		}
-		let req = b.body(AsyncBody::from(data)).map_err(|_| Error::Storage)?;
-		let resp = req.send_async().await.map_err(|e| {
+		// Заливка через общий http11-пул (storage_client), а не дефолтный HTTP/2-клиент:
+		// HTTP/2 мультиплексирует тысячи запросов в одно соединение, что при массовой заливке
+		// в хранилище приводит к сбоям (см. настройку storage_client). Плюс ретрай с backoff
+		// на транзиентные ответы (502 от прокси, 5xx, 429, а также 403 — наблюдался как транзиент).
+		const MAX_ATTEMPTS: u32 = 5;
+		for attempt in 0..MAX_ATTEMPTS {
+			if attempt > 0 {
+				task::sleep(StdDuration::from_millis(200 * (1u64 << attempt))).await;
+			}
+			// Подпись пересчитываем на каждой попытке — у S3 x-amz-date должен быть свежим.
+			let (url, headers) = self
+				.authorized_with(&backend, "PUT", &key, "", &payload_hash, &extra)
+				.await?;
+			let mut b = isahc::Request::builder().method("PUT").uri(url);
+			for (k, v) in &headers {
+				b = b.header(k.as_str(), v.as_str());
+			}
+			let req = b
+				.body(AsyncBody::from(data.clone()))
+				.map_err(|_| Error::Storage)?;
+			let mut resp = match storage_client().send_async(req).await {
+				Ok(r) => r,
+				Err(e) => {
+					eprintln!(
+						"[saras][storage] save send failed attempt={} path={} err={:?}",
+						attempt + 1,
+						path.display(),
+						e
+					);
+					continue;
+				}
+			};
+			let status = resp.status();
+			// Swift отдаёт 201 Created, S3 PutObject — 200 OK.
+			if status == StatusCode::CREATED || status == StatusCode::OK {
+				return Ok(path);
+			}
+			// Тело несёт S3-код ошибки — читаем для диагностики.
+			let mut body = resp.into_body();
+			let mut bytes: Vec<u8> = Vec::new();
+			let _ = futures_lite::io::AsyncReadExt::read_to_end(&mut body, &mut bytes).await;
 			eprintln!(
-				"[saras][storage] save failed path={} err={:?}",
+				"[saras][storage] save non-2xx attempt={} path={} status={} body={}",
+				attempt + 1,
 				path.display(),
-				e
+				status,
+				String::from_utf8_lossy(&bytes)
 			);
-			Error::Storage
-		})?;
-		// Swift отдаёт 201 Created, S3 PutObject — 200 OK.
-		if resp.status() != StatusCode::CREATED && resp.status() != StatusCode::OK {
-			eprintln!(
-				"[saras][storage] save failed path={} status={} headers={:?}",
-				path.display(),
-				resp.status(),
-				resp.headers()
-			);
+			let transient = matches!(status.as_u16(), 500 | 502 | 503 | 504 | 429)
+				|| status == StatusCode::FORBIDDEN;
+			if transient && attempt + 1 < MAX_ATTEMPTS {
+				continue;
+			}
 			return Err(Error::Storage);
 		}
-		Ok(path)
+		Err(Error::Storage)
 	}
 	pub async fn _save_stream<R>(
 		&self,
