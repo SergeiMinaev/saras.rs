@@ -45,6 +45,9 @@ pub struct SelectelConf {
 	// Приватный контейнер под мастера/непубличные объекты. Пусто — orig лежит в основном контейнере (старое поведение).
 	#[serde(default)]
 	pub private_container_name: String,
+	// S3 приватных мастеров. Без секции сохраняется прежнее размещение в Swift.
+	#[serde(default)]
+	pub private_s3: Option<S3Conf>,
 	pub svc_user_name: String,
 	pub svc_user_pwd: String,
 	pub s3_access_key_id: Option<String>,
@@ -64,6 +67,15 @@ pub struct SelectelConf {
 
 fn default_true() -> bool {
 	true
+}
+
+impl SelectelConf {
+	pub fn private_container(&self) -> &str {
+		self.private_s3.as_ref()
+			.map(|s3| s3.bucket.as_str())
+			.unwrap_or(self.private_container_name.as_str())
+			.trim()
+	}
 }
 
 #[derive(Debug, Deserialize)]

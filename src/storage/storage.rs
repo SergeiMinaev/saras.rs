@@ -17,7 +17,7 @@ use serde_json::json;
 use rand::{thread_rng, Rng};
 use rand::distributions::Alphanumeric;
 use crate::errors::Error;
-use crate::conf::{CONF, S3Conf};
+use crate::conf::{CONF, S3Conf, SelectelConf};
 use crate::memstore::MEMSTORE;
 //use crate::storage::msgs;
 use crate::util::slugify;
@@ -98,9 +98,16 @@ pub fn randomize_path(mut path: PathBuf) -> PathBuf {
 }
 
 pub struct Storage {
-	use_map: bool,
+	target: StorageTarget,
 	container_override: Option<String>,
 	api_base_override: Option<String>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum StorageTarget {
+	Main,
+	Map,
+	Private,
 }
 
 #[derive(Debug, Clone)]
@@ -142,14 +149,21 @@ struct S3BucketTarget {
 impl Storage {
 	pub fn new() -> Self {
 		Self {
-			use_map: false,
+			target: StorageTarget::Main,
 			container_override: None,
 			api_base_override: None,
 		}
 	}
 	pub fn with_map() -> Self {
 		Self {
-			use_map: true,
+			target: StorageTarget::Map,
+			container_override: None,
+			api_base_override: None,
+		}
+	}
+	pub fn with_private() -> Self {
+		Self {
+			target: StorageTarget::Private,
 			container_override: None,
 			api_base_override: None,
 		}
@@ -161,7 +175,7 @@ impl Storage {
 			"[saras] Storage::with_container: empty container name"
 		);
 		Self {
-			use_map: false,
+			target: StorageTarget::Main,
 			container_override: Some(container),
 			api_base_override: None,
 		}
@@ -181,7 +195,7 @@ impl Storage {
 			"[saras] Storage::with_container_and_base_url: empty api base url"
 		);
 		Self {
-			use_map: false,
+			target: StorageTarget::Main,
 			container_override: Some(container),
 			api_base_override: Some(api_base_url),
 		}
@@ -192,7 +206,7 @@ impl Storage {
 		let conf = CONF.read().await;
 		let base = if let Some(b) = self.api_base_override.as_ref() {
 			b
-		} else if self.use_map {
+		} else if self.target == StorageTarget::Map {
 			&conf.selectel.map_api_base_url
 		} else {
 			&conf.selectel.api_base_url
@@ -200,8 +214,10 @@ impl Storage {
 		let proj_id = &conf.selectel.proj_id;
 		let container = if let Some(c) = self.container_override.as_ref() {
 			c
-		} else if self.use_map {
+		} else if self.target == StorageTarget::Map {
 			&conf.selectel.map_container_name
+		} else if self.target == StorageTarget::Private && !conf.selectel.private_container_name.trim().is_empty() {
+			&conf.selectel.private_container_name
 		} else {
 			&conf.selectel.container_name
 		};
@@ -212,33 +228,45 @@ impl Storage {
 		format!("{}/{}", self.base_url_for().await, path.display())
 	}
 
-	// Резолвит бэкенд таргета. S3 включается наличием секции s3/map_s3 в конфиге;
+	// Резолвит бэкенд таргета. S3 включается секцией соответствующего хранилища;
 	// явный override контейнера/базы (DEM) всегда остаётся на Swift.
 	async fn backend(&self) -> Backend {
 		let conf = CONF.read().await;
+		self.backend_with_config(&conf.selectel)
+	}
+
+	fn backend_with_config(&self, conf: &SelectelConf) -> Backend {
 		if self.container_override.is_none() && self.api_base_override.is_none() {
-			let s3 = if self.use_map { &conf.selectel.map_s3 } else { &conf.selectel.s3 };
+			let s3 = match self.target {
+				StorageTarget::Main => conf.s3.as_ref(),
+				StorageTarget::Map => conf.map_s3.as_ref(),
+				StorageTarget::Private if conf.private_s3.is_some() => conf.private_s3.as_ref(),
+				StorageTarget::Private if conf.private_container_name.trim().is_empty() => conf.s3.as_ref(),
+				StorageTarget::Private => None,
+			};
 			if let Some(s3) = s3 {
 				return Backend::S3(s3.clone());
 			}
 		}
 		let api_base = if let Some(b) = self.api_base_override.as_ref() {
 			b.trim().to_string()
-		} else if self.use_map {
-			conf.selectel.map_api_base_url.trim().to_string()
+		} else if self.target == StorageTarget::Map {
+			conf.map_api_base_url.trim().to_string()
 		} else {
-			conf.selectel.api_base_url.trim().to_string()
+			conf.api_base_url.trim().to_string()
 		};
 		let container = if let Some(c) = self.container_override.as_ref() {
 			c.trim().to_string()
-		} else if self.use_map {
-			conf.selectel.map_container_name.trim().to_string()
+		} else if self.target == StorageTarget::Map {
+			conf.map_container_name.trim().to_string()
+		} else if self.target == StorageTarget::Private && !conf.private_container_name.trim().is_empty() {
+			conf.private_container_name.trim().to_string()
 		} else {
-			conf.selectel.container_name.trim().to_string()
+			conf.container_name.trim().to_string()
 		};
 		Backend::Swift {
 			api_base,
-			proj_id: conf.selectel.proj_id.trim().to_string(),
+			proj_id: conf.proj_id.trim().to_string(),
 			container,
 		}
 	}
@@ -1684,6 +1712,86 @@ fn content_type_for_path(path: &Path) -> Option<&'static str> {
 mod tests {
 	use super::*;
 	use std::path::PathBuf;
+
+	fn storage_config(s3_sections: &str) -> SelectelConf {
+		toml::from_str(&format!(r#"
+account_id = "test"
+proj_id = "project"
+proj_name = "test"
+container_name = "main"
+container_hostname = "https://main.example"
+private_container_name = "private"
+svc_user_name = "test"
+svc_user_pwd = "test"
+token_lifetime_sec = 3600
+api_base_url = "https://swift.example/v1"
+map_api_base_url = "https://swift-map.example/v1"
+map_container_name = "map"
+map_container_hostname = "https://map.example"
+{s3_sections}
+"#)).unwrap()
+	}
+
+	fn s3_section(name: &str) -> String {
+		format!(r#"
+[{name}]
+endpoint = "https://s3.example"
+region = "ru1"
+bucket = "{name}"
+access_key_id = "{name}-access"
+secret_access_key = "test-secret"
+hostname = "https://s3.example/{name}"
+"#)
+	}
+
+	#[test]
+	fn private_s3_is_independent_of_main_and_map() {
+		let config = storage_config(&[s3_section("s3"), s3_section("map_s3"), s3_section("private_s3")].concat());
+		for (storage, bucket) in [(Storage::new(), "s3"), (Storage::with_map(), "map_s3"), (Storage::with_private(), "private_s3")] {
+			let Backend::S3(s3) = storage.backend_with_config(&config) else { panic!("expected S3"); };
+			assert_eq!(s3.bucket, bucket);
+			assert_eq!(s3.access_key_id, format!("{bucket}-access"));
+		}
+		assert_eq!(config.private_container(), "private_s3");
+	}
+
+	#[test]
+	fn private_s3_does_not_need_a_legacy_swift_name() {
+		let mut config = storage_config(&s3_section("private_s3"));
+		config.private_container_name.clear();
+		let Backend::S3(s3) = Storage::with_private().backend_with_config(&config) else { panic!("expected S3"); };
+		assert_eq!(s3.bucket, "private_s3");
+		assert_eq!(config.private_container(), "private_s3");
+	}
+
+	#[test]
+	fn private_swift_keeps_working_when_only_main_switches_to_s3() {
+		let config = storage_config(&s3_section("s3"));
+		let Backend::Swift { api_base, container, .. } = Storage::with_private().backend_with_config(&config) else { panic!("expected Swift"); };
+		assert_eq!(api_base, "https://swift.example/v1");
+		assert_eq!(container, "private");
+		assert_eq!(config.private_container(), "private");
+	}
+
+	#[test]
+	fn unspecified_private_storage_preserves_legacy_main_storage() {
+		let mut config = storage_config(&s3_section("s3"));
+		config.private_container_name.clear();
+		let Backend::S3(s3) = Storage::with_private().backend_with_config(&config) else { panic!("expected S3"); };
+		assert_eq!(s3.bucket, "s3");
+		config.s3 = None;
+		let Backend::Swift { container, .. } = Storage::with_private().backend_with_config(&config) else { panic!("expected Swift"); };
+		assert_eq!(container, "main");
+	}
+
+	#[test]
+	fn explicit_swift_overrides_do_not_use_private_s3() {
+		let config = storage_config(&s3_section("private_s3"));
+		let storage = Storage::with_container_and_base_url("other", "https://other.example/v1");
+		let Backend::Swift { api_base, container, .. } = storage.backend_with_config(&config) else { panic!("expected Swift"); };
+		assert_eq!(api_base, "https://other.example/v1");
+		assert_eq!(container, "other");
+	}
 
 	// Эталонный signing key AWS для s3/us-east-1/20130524 (совпадает с документацией AWS).
 	#[test]

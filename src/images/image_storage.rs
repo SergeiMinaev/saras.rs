@@ -110,22 +110,12 @@ impl ImageStorage {
 		ImageStorageBuilder::new()
 	}
 
-	// Хранилище мастеров: приватный контейнер, если задан в конфиге, иначе основной (старое поведение).
-	fn orig_storage(private_container_name: &str) -> Storage {
-		let name = private_container_name.trim();
-		if name.is_empty() {
-			Storage::new()
-		} else {
-			Storage::with_container(name)
-		}
-	}
-
 	/// Прочитать мастер по стему (без префикса `orig/` и без расширения) из orig-контейнера.
 	pub async fn open_orig(&self, rel_path: &Path) -> Result<Vec<u8>, Error> {
 		let conf = CONF.read().await;
 		let main_format = &conf.main_image_format;
 		let path = PathBuf::from(format!("orig/{}.{main_format}", rel_path.display()));
-		let orig = Self::orig_storage(&conf.selectel.private_container_name);
+		let orig = Storage::with_private();
 		orig.open(&path).await
 	}
 	pub async fn delete(&self, rel_path: &PathBuf) -> Result<(), Error> {
@@ -138,7 +128,7 @@ impl ImageStorage {
 		}
 		let main_format = &conf.main_image_format;
 		let main_path = PathBuf::from(format!("orig/{}.{main_format}", rel_path.display()));
-		let orig = Self::orig_storage(&conf.selectel.private_container_name);
+		let orig = Storage::with_private();
 		orig.delete(&main_path).await?;
 		Ok(())
 	}
@@ -149,7 +139,7 @@ impl ImageStorage {
 			self.storage.delete(&path).await?;
 		}
 		let main_path = PathBuf::from(format!("orig/{}", rel_path.display()));
-		let orig = Self::orig_storage(&conf.selectel.private_container_name);
+		let orig = Storage::with_private();
 		orig.delete(&main_path).await?;
 		Ok(())
 	}
@@ -162,7 +152,7 @@ impl ImageStorage {
 			.shrink_mode
 			.unwrap_or_else(|| ImgShrinkMode::from_conf_value(&conf.img_shrink_quality_mode));
 
-		let orig = Self::orig_storage(&conf.selectel.private_container_name);
+		let orig = Storage::with_private();
 		let mut path = PathBuf::from(format!("orig/{}", path.display()));
 		path.set_extension(main_format);
 		let path = orig.get_unique_path(&path).await?;
@@ -239,7 +229,7 @@ impl ImageStorage {
 				.trim_start_matches('.')
 				.to_lowercase()
 		);
-		let orig = Self::orig_storage(&conf.selectel.private_container_name);
+		let orig = Storage::with_private();
 		drop(conf);
 		let path = norm_path(format!("orig/{}", path.display()));
 		let path = PathBuf::from(path.strip_prefix("/").unwrap_or(&path));
